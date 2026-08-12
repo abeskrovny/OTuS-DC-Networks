@@ -62,19 +62,19 @@
 
 | Hostname | Type | If | IP/Mask |
 |------------|-----------|-----------|-----------------|
-| swSpine01 | Spine | Loopback0 | `2001:db8:0101::1/64` |
-| swSpine02 | Spine | Loopback0 | `2001:db8:0102::1/64` |
-| swLeaf01 | Leaf | Loopback0 | `2001:db8:0100:0201::1/64` |
-| swLeaf02 | Leaf | Loopback0 | `2001:db8:0100:0202::1/64` |
-| swLeaf03 | Leaf | Loopback0 | `2001:db8:0100:0203::1/64` |
+| swSpine01 | Spine | Loopback0 | `2001:db8:0101::1/128` |
+| swSpine02 | Spine | Loopback0 | `2001:db8:0102::1/128` |
+| swLeaf01 | Leaf | Loopback0 | `2001:db8:0100:0201::1/128` |
+| swLeaf02 | Leaf | Loopback0 | `2001:db8:0100:0202::1/128` |
+| swLeaf03 | Leaf | Loopback0 | `2001:db8:0100:0203::1/128` |
 
 *Таблица 2: Overlay Data Plane VTEP*
 
 | Hostname | Type | If | IP/Mask |
 |------------|-----------|-----------|-----------------|
-| swLeaf01 | Leaf | Loopback1 | `2001:db8:0100:0201:0100:1/64` |
-| swLeaf02 | Leaf | Loopback1 | `2001:db8:0100:0202:0100:1/64` |
-| swLeaf03 | Leaf | Loopback1 | `2001:db8:0100:0203:0100:1/64` |
+| swLeaf01 | Leaf | Loopback1 | `2001:db8:0100:0201:0100:1/128` |
+| swLeaf02 | Leaf | Loopback1 | `2001:db8:0100:0202:0100:1/128` |
+| swLeaf03 | Leaf | Loopback1 | `2001:db8:0100:0203:0100:1/128` |
 
 *Таблица 3: p2p соединения фабрики*
 
@@ -90,3 +90,121 @@
 > Cуммаризация в BGP будет выглядеть следующим образом:
 > - На Border Leaf (при анонсе в Core-сеть): 2001:db8:0100::/40.
 > - На Spine-коммутаторах для сборки EVPN-соседств достаточно прописать два суммаризированных маршрута до всех VTEP: 2001:db8:0100:0200:0100::/56
+
+### Конфигурирование Undelay
+Перед началом настройки необходимо отключить процесс Zero Touch Provisioning (ZTP)командой `zerotouch cancel`, после чего коммутатор будет перегружен.
+
+#### Настройка локальных стеков
+Начальная конфигурация для коммутаторов уровня Spine выглядит следующим образом:
+
+```ssh
+hostname swSpine01
+dns domain local
+
+lldp run
+
+ip routing
+
+ipv6 unicast-routing
+
+interface Loopback0
+   description --- Virtual (no VRF, no VLAN): Underlay Control Plane
+   load-interval 60
+   ipv6 address 2001:db8:101::1/128
+
+end
+```
+
+Для второго коммутатора уровня Spine конфигурация аналогичная.
+
+Начальная конфигурация для коммутаторов уровня Leaf выглядит следующим образом:
+```ssh
+hostname swLeaf01
+dns domain local
+
+lldp run
+
+ip routing
+
+ipv6 unicast-routing
+
+interface Loopback0
+   description --- Virtual (no VRF, no VLAN): Underlay Control Plane
+   load-interval 60
+   ipv6 address 2001:db8:0100:0201::1/128
+
+interface Loopback1
+   description --- Virtual (no VRF, no VLAN): Overlay VTEP Edge
+   load-interval 60
+   ipv6 address 2001:db8:100:201:100::1/128
+
+end
+```
+
+Далее, соберем линки. Рассмотрим в примере соединение swSpine01-swLeaf01.
+
+На стороне swSpine01 производим следующие действия:
+```ssh
+swSpine01#sh lldp neighbors 
+Last table change time   : 0:14:53 ago
+Number of table inserts  : 4
+Number of table deletes  : 1
+Number of table drops    : 0
+Number of table age-outs : 1
+
+Port          Neighbor Device ID       Neighbor Port ID    TTL
+---------- ------------------------ ---------------------- ---
+Et1           swLeaf01.local           Ethernet1           120
+Et2           localhost                Ethernet1           120
+Et3           localhost                Ethernet1           120
+```
+
+Как видно из вывода, для этого соединения необходимо сконфигурировать интерфейс `Et1` следующим образом:
+```ssh
+interface Ethernet1
+   description --- L3 (no VRF, no VLAN): p2p connection to swLeaf01/Et1
+   load-interval 60
+   no switchport
+   ipv6 address 2001:db8:101:201:201::1/64
+```
+
+Переходим на swLeaf01:
+```ssh
+swLeaf01#sh lldp neighbors 
+Last table change time   : 0:08:38 ago
+Number of table inserts  : 2
+Number of table deletes  : 0
+Number of table drops    : 0
+Number of table age-outs : 0
+
+Port          Neighbor Device ID       Neighbor Port ID    TTL
+---------- ------------------------ ---------------------- ---
+Et1           swSpine01.local          Ethernet1           120
+Et2           swSpine02.local          Ethernet1           120
+```
+
+и конфигурируем соответствующий порт:
+```ssh
+interface Ethernet1
+   description --- L3 (no VRF, no VLAN): p2p connection to swSpine01/Et1
+   load-interval 60
+   no switchport
+   ipv6 address 2001:db8:101:201:201::2/64
+```
+
+Проверим связанность:
+```ssh
+swLeaf01#ping ipv6 2001:db8:101:201:201::1
+PING 2001:db8:101:201:201::1(2001:db8:101:201:201::1) 52 data bytes
+60 bytes from 2001:db8:101:201:201::1: icmp_seq=1 ttl=64 time=51.7 ms
+60 bytes from 2001:db8:101:201:201::1: icmp_seq=2 ttl=64 time=54.4 ms
+60 bytes from 2001:db8:101:201:201::1: icmp_seq=3 ttl=64 time=51.6 ms
+60 bytes from 2001:db8:101:201:201::1: icmp_seq=4 ttl=64 time=68.3 ms
+60 bytes from 2001:db8:101:201:201::1: icmp_seq=5 ttl=64 time=64.9 ms
+
+--- 2001:db8:101:201:201::1 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 47ms
+rtt min/avg/max/mdev = 51.698/58.231/68.352/7.044 ms, pipe 5, ipg/ewma 11.931/55.418 ms
+```
+
+Остальные соединения настраиваются аналогично.
