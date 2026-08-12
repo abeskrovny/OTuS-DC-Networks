@@ -52,16 +52,21 @@
     - <Leaf> - порядковый номер коммутатора уровня Leaf (8 бит);
 
 - 5 хексет:
-    - <Service-Type> - тип сервиса:
+    - <Service-Type> - тип сервиса (8 бит):
         - 00 — Underlay Control Plane (Loopback0);
         - 01 — Overlay Data Plane VTEP (Loopback1);
         - 02 — p2p линки между коммутаторами;
-        - FF — Зарезервировано для подключения серверов AnyCast.
+        - FF — Зарезервировано для подключения серверов AnyCast;
+    - <Subnet> - (8 бит).
 
 Т.о., данный IP план позволяет нам достаточно широко масштабироваться до 255 сайтов/ЦОД с 255 коммутаторами на каждом из уровней.
 
 *Таблица 1: Underlay Control Plane*
 
-| :Hostname: | :Type: | :If: | IP/Mask: |
+| Hostname | Type | If | IP/Mask |
 |------------|-----------|-----------|-----------------|
-| :swSpine01: | :Spine: | :Loopback0: | `2001:db8:0101:0000::1/64`:|
+| swSpine01 | Spine | Loopback0 | `2001:db8:0101::1/64` |
+| swSpine02 | Spine | Loopback0 | `2001:db8:0102::1/64` |
+| swLeaf01 | Leaf | Loopback0 | `2001:db8:0100:0201::1/64` |
+| swLeaf02 | Leaf | Loopback0 | `2001:db8:0100:0202::1/64` |
+| swLeaf03 | Leaf | Loopback0 | `2001:db8:0100:0203::1/64` |
