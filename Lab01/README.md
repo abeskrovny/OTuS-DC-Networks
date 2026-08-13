@@ -27,7 +27,11 @@
 Т.о., при использовании 50Gbps аплинтов нам потребуется 5 коммутаторов уровня Spine и по 6 портов аплинков на стороне Leaf с соответствующей полосой пропускания.
 
 ### Распределение адресного пространства для Underlay сети
-В качестве теста, есть смысл рассмотреть дуалстек-решение.
+В рамках данного курса хочу, в качестве эксперемента, реализовать Dual-Stack решение, с целью одновременного тестирования различных программных архитектур на базе единой физической модели.
+
+Архитектурное разделение трафика на уровни IPv4 и IPv6 позволяет параллельно реализовать и валидировать принципиально разные методы построения Underlay-сети без развертывания дополнительных стендов. В ходе эксперимента планируется симулировать и сравнить различные подходы к передаче служебного трафика (например, классический Broadcast Flood против оптимизированной Multicast-доставки), а также запустить независимые протоколы динамической маршрутизации для каждого из стеков.
+
+Такой подход позволит наглядно оценить эффективность, ресурсоемкость и особенности эксплуатации различных программных сценариев в идентичных инфраструктурных условиях.
 
 #### IPv6-план
 Со своей точки зрения, считаю вариант использования IPv6-стека для подстилающей сети наиболее гибким с точки зрения дальнейшей интеграции или масштабирования.
@@ -37,7 +41,7 @@
 В рамках совместимости будем оперировать префиксами /64.
 
 Структура адреса:
-`2001 : db8 : <DC><Spine> : <Leaf-Type><Leaf> : <Service-Type>00 :: <Host>/64`
+`2001 : db8 : <DC><Spine> : <Leaf-Type><Leaf> : <Service-Type>00 :: <Host>`
 
 где:
 - 3 хексет:
@@ -100,7 +104,7 @@
 Для подстилающей сети будем использовать приватную сеть класса A 10.0.0.0/8.
 
 Структура адреса:
-`10.<DC>.<Type>.<Host>/8`
+`10.<DC>.<Type>.<Host>`
 
 где:
 - <DC> - определяет порядковый номер сайта/ЦОД (2 байта);
@@ -108,7 +112,7 @@
     - 00 - зарезервировано для Spine;
     - 01 - зарезервировано для Client Edge;
     - 02 - Server Edge;
-    - 200 - заразервировано для VTEP Edge;  
+    - 1хх - заразервировано для VTEP Edge;  
     - 255 - зарезервировано для Border Leaf.
 
 *Таблица 4: Underlay Control Plane IPv4*
@@ -125,12 +129,9 @@
 
 | Hostname | Type | If | IPv4/Mask |
 |------------|-----------|-----------|-----------------|
-| swLeaf01 | Leaf | Loopback1 | `2001:db8:0100:0201:0100:1/128` |
-| swLeaf02 | Leaf | Loopback1 | `2001:db8:0100:0202:0100:1/128` |
-| swLeaf03 | Leaf | Loopback1 | `2001:db8:0100:0203:0100:1/128` |
-
-
-
+| swLeaf01 | Leaf | Loopback1 | `10.1.102.1/32` |
+| swLeaf02 | Leaf | Loopback1 | `10.1.102.2/32` |
+| swLeaf03 | Leaf | Loopback1 | `10.1.102.3/32` |
 
 ### Конфигурирование Undelay
 Перед началом настройки необходимо отключить процесс Zero Touch Provisioning (ZTP)командой `zerotouch cancel`, после чего коммутатор будет перегружен.
@@ -151,6 +152,7 @@ ipv6 unicast-routing
 interface Loopback0
    description --- Virtual (no VRF, no VLAN): Underlay Control Plane
    load-interval 60
+   ip address 10.1.0.1/32
    ipv6 address 2001:db8:101::1/128
 
 end
@@ -159,7 +161,8 @@ end
 Для второго коммутатора уровня Spine конфигурация аналогичная.
 
 Начальная конфигурация для коммутаторов уровня Leaf выглядит следующим образом:
-```ssh
+
+```config
 hostname swLeaf01
 dns domain local
 
@@ -172,21 +175,25 @@ ipv6 unicast-routing
 interface Loopback0
    description --- Virtual (no VRF, no VLAN): Underlay Control Plane
    load-interval 60
+   ip address 10.1.2.1/32
    ipv6 address 2001:db8:0100:0201::1/128
 
 interface Loopback1
    description --- Virtual (no VRF, no VLAN): Overlay VTEP Edge
    load-interval 60
+   ip address 10.1.102.1/32
    ipv6 address 2001:db8:100:201:100::1/128
 
 end
 ```
 
-#### 
+#### Настройка соединений фабрики
+##### Стек IPv4
 Соберем линки. Рассмотрим в примере соединение swSpine01-swLeaf01.
 
 На стороне swSpine01 производим следующие действия:
-```ssh
+
+```
 swSpine01#sh lldp neighbors 
 Last table change time   : 0:14:53 ago
 Number of table inserts  : 4
@@ -201,15 +208,196 @@ Et2           localhost                Ethernet1           120
 Et3           localhost                Ethernet1           120
 ```
 
+Начнем с настройки IPv4 стека:
 
-
-```ssh
+```config
 interface Ethernet1
-description --- L3 (no VRF, no VLAN): p2p connection to swLeaf01/Et1
-load-interval 60
-no switchport
+   description --- L3 (no VRF, no VLAN): p2p connection to swLeaf01/Et1
+   load-interval 60
+   no switchport
+   ip address unnumbered Loopback0
+```
+
+Проверим настройки:
+
+```
+swSpine01#sh ip int br
+                                                                        Address
+Interface        IP Address       Status      Protocol           MTU    Owner  
+---------------- ---------------- ----------- ------------- ----------- -------
+Ethernet1        10.1.0.1/32      up          up                1500    Lo0    
+Ethernet2        unassigned       up          up                1500           
+Ethernet3        unassigned       up          up                1500           
+Loopback0        10.1.0.1/32      up          up               65535           
+Management1      unassigned       up          up                1500 
+```
+
+Переходим на сторону коммутатора swLeaf01.
+
+```config
+interface Ethernet1
+   description --- L3 (no VRF, no VLAN): p2p connection to swSpine01/Et1
+   load-interval 60
+   no switchport
+   ip address unnumbered Loopback0
+```
+
+Проверим состояние:
+
+```
+swLeaf01#sh ip int br
+                                                                        Address
+Interface       IP Address         Status      Protocol          MTU    Owner  
+--------------- ------------------ ----------- ------------- ---------- -------
+Ethernet1       10.1.2.1/32        up          up               1500    Lo0    
+Ethernet2       unassigned         up          up               1500           
+Loopback0       10.1.2.1/32        up          up              65535           
+Loopback1       10.1.102.1/32      up          up              65535           
+Management1     unassigned         up          up               1500  
+```
+
+и связанность по p2p линку сначала на себя, потом на соседа:
+
+```
+swLeaf01#ping 10.1.2.1
+PING 10.1.2.1 (10.1.2.1) 72(100) bytes of data.
+80 bytes from 10.1.2.1: icmp_seq=1 ttl=64 time=0.558 ms
+80 bytes from 10.1.2.1: icmp_seq=2 ttl=64 time=0.199 ms
+80 bytes from 10.1.2.1: icmp_seq=3 ttl=64 time=0.178 ms
+80 bytes from 10.1.2.1: icmp_seq=4 ttl=64 time=0.175 ms
+80 bytes from 10.1.2.1: icmp_seq=5 ttl=64 time=0.172 ms
+
+--- 10.1.2.1 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 8ms
+rtt min/avg/max/mdev = 0.172/0.256/0.558/0.151 ms, ipg/ewma 2.062/0.401 ms
+
+swLeaf01#ping 10.1.0.1
+connect: Network is unreachable
+```
+
+Такое поведение мы будем наблюдать до тех пор, пока не настроим маршрутизацию между сетями на p2p линке.
+
+Для проверки работоспособности можно, например, поднять временные статические маршруты:
+
+```config
+ip route 10.1.2.1 255.255.255.255 ethernet 1    # на стороне swSpine01
+ip route 10.1.0.1 255.255.255.255 ethernet 1    # на стороне swLeaf01
+```
+
+после чего ситуация изменится:
+
+```
+swLeaf01#ping 10.1.0.1
+PING 10.1.0.1 (10.1.0.1) 72(100) bytes of data.
+80 bytes from 10.1.0.1: icmp_seq=1 ttl=64 time=16.2 ms
+80 bytes from 10.1.0.1: icmp_seq=2 ttl=64 time=16.8 ms
+80 bytes from 10.1.0.1: icmp_seq=3 ttl=64 time=7.58 ms
+80 bytes from 10.1.0.1: icmp_seq=4 ttl=64 time=6.82 ms
+80 bytes from 10.1.0.1: icmp_seq=5 ttl=64 time=9.03 ms
+
+--- 10.1.0.1 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 69ms
+```
+
+##### Стек IPv6
+Настройку будем производить аналогично, начиная со стороны swSpine01.
+
+Попробуем, сначала, поработать с адресами Link-local - некоторого рода аналог Unnumbered в IPv4. При таком подходе (отсутствии Unicast-адреса необходимо просто включить протокол на интерфейсе):
+
+```config
+interface Ethernet1
 ipv6 enable
 ```
+
+и посмотрим состояние стека:
+
+```
+swSpine01#sh ipv6 int br
+Interface  Status    MTU   IPv6 Address                 Addr State  Addr Source
+---------- ------- ------ ---------------------------- ------------ -----------
+Et1        up       1500   fe80::5200:ff:fed7:ee0b/64   up          link local 
+Lo0        up      65535   fe80::ff:fe00:0/64           up          link local 
+                           2001:db8:101::1/128          up          config  
+```
+
+Аналогичную настройку необходимо будет произвести и на стороне swLeaf01.
+
+```
+swLeaf01#sh ipv6 interface brief 
+Interface  Status    MTU  IPv6 Address                  Addr State  Addr Source
+---------- ------- ------ ---------------------------- ------------ -----------
+Et1        up       1500  fe80::5200:ff:fed5:5dc0/64    up          link local 
+Lo0        up      65535  fe80::ff:fe00:0/64            up          link local 
+                          2001:db8:100:201::1/128       up          config     
+Lo1        up      65535  fe80::ff:fe00:0/64            up          link local 
+                          2001:db8:100:201:100::1/128   up          config   
+```
+
+Теперь можно проверить связанность на p2p линке:
+
+```
+swLeaf01#ping ipv6 fe80::5200:ff:fed7:ee0b interface ethernet 1
+PING fe80::5200:ff:fed7:ee0b(fe80::5200:ff:fed7:ee0b) from fe80::5200:ff:fed5:5dc0%et1 et1: 52 data bytes
+60 bytes from fe80::5200:ff:fed7:ee0b%et1: icmp_seq=1 ttl=64 time=12.8 ms
+60 bytes from fe80::5200:ff:fed7:ee0b%et1: icmp_seq=2 ttl=64 time=10.6 ms
+60 bytes from fe80::5200:ff:fed7:ee0b%et1: icmp_seq=3 ttl=64 time=12.9 ms
+60 bytes from fe80::5200:ff:fed7:ee0b%et1: icmp_seq=4 ttl=64 time=12.0 ms
+60 bytes from fe80::5200:ff:fed7:ee0b%et1: icmp_seq=5 ttl=64 time=13.7 ms
+
+--- fe80::5200:ff:fed7:ee0b ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 85ms
+rtt min/avg/max/mdev = 10.670/12.465/13.749/1.049 ms, ipg/ewma 21.437/12.724 ms
+```
+
+Замечательно.
+
+Настроим Unicast согласно плана, на стороне swSpine01:
+
+```config
+interface Ethernet1
+   description --- L3 (no VRF, no VLAN): p2p connection to swLeaf01/Et1
+   load-interval 60
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   ipv6 address 2001:db8:101:201:201::1/64
+```
+
+и на стороне swLeaf01:
+
+```config
+interface Ethernet1
+   description --- L3 (no VRF, no VLAN): p2p connection to swSpine01/Et1
+   load-interval 60
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   ipv6 address 2001:fb8:101:201:201::2/64
+```
+
+Проверим связанность:
+
+```ssh
+swLeaf01#ping ipv6 2001:db8:101:201:201::1
+PING 2001:db8:101:201:201::1(2001:db8:101:201:201::1) 52 data bytes
+60 bytes from 2001:db8:101:201:201::1: icmp_seq=1 ttl=64 time=51.7 ms
+60 bytes from 2001:db8:101:201:201::1: icmp_seq=2 ttl=64 time=54.4 ms
+60 bytes from 2001:db8:101:201:201::1: icmp_seq=3 ttl=64 time=51.6 ms
+60 bytes from 2001:db8:101:201:201::1: icmp_seq=4 ttl=64 time=68.3 ms
+60 bytes from 2001:db8:101:201:201::1: icmp_seq=5 ttl=64 time=64.9 ms
+
+--- 2001:db8:101:201:201::1 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 47ms
+rtt min/avg/max/mdev = 51.698/58.231/68.352/7.044 ms, pipe 5, ipg/ewma 11.931/55.418 ms
+```
+
+При этом есть еще один момент, который может помочь в экономии IPv6 адресов: использование не Unicast
+
+Остальные соединения настраиваются аналогично.
+
+---
+
+
 
 
 
