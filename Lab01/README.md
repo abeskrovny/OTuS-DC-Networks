@@ -6,7 +6,7 @@
 - [Распределение адресного пространства для Underlay сети](#распределение-адресного-пространства-для-underlay-сети)
 
 ### Схема сети
-![Схема сети](image-1.png)
+![Схема сети](image-2.png)
 
 ### Расчет емкости ЦОД
 Будем считать, что DC представляет собой коммерческий микро-ЦОД следующей конфигурации:
@@ -191,7 +191,7 @@ end
 ##### Стек IPv4
 Соберем линки. Рассмотрим в примере соединение swSpine01-swLeaf01.
 
-На стороне swSpine01 производим следующие действия:
+На стороне swSpine01 предварительно проверим соседство, полученное через LLDP:
 
 ```
 swSpine01#sh lldp neighbors 
@@ -232,7 +232,22 @@ Loopback0        10.1.0.1/32      up          up               65535
 Management1      unassigned       up          up                1500 
 ```
 
-Переходим на сторону коммутатора swLeaf01.
+Переходим на сторону коммутатора swLeaf01 и проверим соседство:
+
+```
+swLeaf01#sh lldp neighbors 
+Last table change time   : 0:08:38 ago
+Number of table inserts  : 2
+Number of table deletes  : 0
+Number of table drops    : 0
+Number of table age-outs : 0
+
+Port          Neighbor Device ID       Neighbor Port ID    TTL
+---------- ------------------------ ---------------------- ---
+Et1           swSpine01.local          Ethernet1           120
+```
+
+Настраиваем соответствующий интерфейс:
 
 ```config
 interface Ethernet1
@@ -394,70 +409,3 @@ rtt min/avg/max/mdev = 51.698/58.231/68.352/7.044 ms, pipe 5, ipg/ewma 11.931/55
 При этом есть еще один момент, который может помочь в экономии IPv6 адресов: использование не Unicast
 
 Остальные соединения настраиваются аналогично.
-
----
-
-
-
-
-
-
-
-
-
-
-
-Как видно из вывода, для этого соединения необходимо сконфигурировать интерфейс `Et1` следующим образом:
-```ssh
-interface Ethernet1
-   description --- L3 (no VRF, no VLAN): p2p connection to swLeaf01/Et1
-   load-interval 60
-   no switchport
-   ipv6 address 2001:db8:101:201:201::1/64
-```
-
-Переходим на swLeaf01:
-```ssh
-swLeaf01#sh lldp neighbors 
-Last table change time   : 0:08:38 ago
-Number of table inserts  : 2
-Number of table deletes  : 0
-Number of table drops    : 0
-Number of table age-outs : 0
-
-Port          Neighbor Device ID       Neighbor Port ID    TTL
----------- ------------------------ ---------------------- ---
-Et1           swSpine01.local          Ethernet1           120
-Et2           swSpine02.local          Ethernet1           120
-```
-
-и конфигурируем соответствующий порт:
-```ssh
-interface Ethernet1
-   description --- L3 (no VRF, no VLAN): p2p connection to swSpine01/Et1
-   load-interval 60
-   no switchport
-   ipv6 address 2001:db8:101:201:201::2/64
-```
-
-Проверим связанность:
-```ssh
-swLeaf01#ping ipv6 2001:db8:101:201:201::1
-PING 2001:db8:101:201:201::1(2001:db8:101:201:201::1) 52 data bytes
-60 bytes from 2001:db8:101:201:201::1: icmp_seq=1 ttl=64 time=51.7 ms
-60 bytes from 2001:db8:101:201:201::1: icmp_seq=2 ttl=64 time=54.4 ms
-60 bytes from 2001:db8:101:201:201::1: icmp_seq=3 ttl=64 time=51.6 ms
-60 bytes from 2001:db8:101:201:201::1: icmp_seq=4 ttl=64 time=68.3 ms
-60 bytes from 2001:db8:101:201:201::1: icmp_seq=5 ttl=64 time=64.9 ms
-
---- 2001:db8:101:201:201::1 ping statistics ---
-5 packets transmitted, 5 received, 0% packet loss, time 47ms
-rtt min/avg/max/mdev = 51.698/58.231/68.352/7.044 ms, pipe 5, ipg/ewma 11.931/55.418 ms
-```
-
-При этом есть еще один момент, который может помочь в экономии IPv6 адресов: использование не Unicast
-
-Остальные соединения настраиваются аналогично.
-
-### 2 вариант - unnumbered! ipv6 link-local может быть сведен к этому
-
