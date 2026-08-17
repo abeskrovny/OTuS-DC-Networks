@@ -187,10 +187,16 @@ interface Loopback0
    ipv6 address 2001:db8:0100:0201::1/128
 
 interface Loopback1
-   description --- Virtual (no VRF, no VLAN): Overlay VTEP Edge
+   description --- Virtual (no VRF, no VLAN): Overlay VTEP Edge-01
    load-interval 60
    ip address 10.1.102.1/32
    ipv6 address 2001:db8:100:201:100::1/128
+
+interface Loopback2
+   description --- Virtual (no VRF, no VLAN): Overlay VTEP Edge-02
+   load-interval 60
+   ip address 10.1.202.1/32
+   ipv6 address 2001:db8:100:201:200::1/128
 
 end
 ```
