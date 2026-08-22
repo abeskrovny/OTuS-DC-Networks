@@ -107,6 +107,7 @@ interface Ethernet1
 interface Ethernet2
    description --- L3 (no VRF, no VLAN) p2p connection to swLeaf02/Et1
    load-interval 60
+   mtu 9214
    no switchport
    ip address unnumbered Loopback0
    ipv6 enable
@@ -115,6 +116,7 @@ interface Ethernet2
 interface Ethernet3
    description --- L3 (no VRF, no VLAN) p2p connection to swLeaf03/Et1
    load-interval 60
+   mtu 9214
    no switchport
    ip address unnumbered Loopback0
    ipv6 enable
@@ -192,6 +194,7 @@ vrf instance plnOOB
 interface Ethernet1
    description --- L3 (no VRF, no VLAN): p2p connection to swSpine01/Et1
    load-interval 60
+   mtu 9214
    no switchport
    ip address unnumbered Loopback0
    ipv6 enable
@@ -200,6 +203,7 @@ interface Ethernet1
 interface Ethernet2
    description --- L3 (no VRF, no VLAN): p2p connection to swSpine02/Et1
    load-interval 60
+   mtu 9214
    no switchport
    ip address unnumbered Loopback0
    ipv6 enable
