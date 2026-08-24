@@ -16,6 +16,7 @@
    - [Защита от сниффинга](#защита-от-сниффинга)
    - [Защита от спуффинга](#защита-от-спуффинга)
 - [Отказоустойчивость управляющего плана](#отказоустойчивость-управляющего-плана)
+- [Graceful shutdown](#graceful-shutdown)
 
 ### Условие задачи
 В этой самостоятельной работе мы ожидаем, что вы самостоятельно:
@@ -668,3 +669,31 @@ Password:
 ```
 
 > Номер интерфейса необходимо задавать строчными буквами.
+
+### Graceful shutdown
+Graceful shutdown (или graceful degradation) — это плавный и контролируемый вывод устройства или протокола из работы без потери передаваемого трафика.
+
+В протоколе IS-IS аналогом механизма Max-Metric из OSPF является управление битом Overload (OL-бит).
+
+Для включения в контексте экземпляра процесса маршрутизации вводим команду `set-overload-bit`. Убедиться, что коммутатор анонсирует себя в режиме Overload, можно командой `isis database detail`
+В выводе для локального LSP (обычно с расширением -00) ищите флаг Overload.
+```ssh
+swLeaf01#sh isis database detail 
+
+IS-IS Instance: Underlay VRF: default
+  IS-IS Level 2 Link State Database
+    LSPID                   Seq Num  Cksum  Life Length IS Flags
+    swLeaf01.00-00              395  56849  1173    167 L2 <DBOverload>
+      LSP generation remaining wait time: 0 ms
+      Time remaining until refresh: 873 s
+      NLPID: 0xCC(IPv4)
+      Hostname: swLeaf01
+      Authentication mode: SHA Key id: 1 Length: 67
+      Area addresses: 49.0001
+      Interface address: 10.1.2.1
+      IS Neighbor          : 0100.0100.0002.00   Metric: 10
+      IS Neighbor          : 0100.0100.0001.00   Metric: 10
+      Reachability         : 10.1.2.1/32 Metric: 10 Type: 1 Up
+      Router Capabilities: Router Id: 10.1.102.1 Flags: []
+        Area leader priority: 250 algorithm: 0
+```
