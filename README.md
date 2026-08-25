@@ -7,4 +7,4 @@
 - [Lab01: Основы проектирования сети](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab01/README.md)
 - [Lab02: Построение Underlay сети на OSPF](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab02/README.md)
 - [Lab03: Построение Underlay сети на ISIS](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab03/README.md)
-- [Lab03: Построение Underlay сети (BGP)]()
+- [Lab03: Построение Underlay сети (BGP)](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab04/README.md)
