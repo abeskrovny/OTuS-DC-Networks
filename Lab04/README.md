@@ -227,37 +227,389 @@ no ip routing vrf plnOOB
 !
 ipv6 unicast-routing
 !
+ip route vrf plnOOB 0.0.0.0/0 10.1.255.254
+!
 end
 ```
 
 ### Конфигурирование Underlay сети с использованием BGP
+
+#### Вариант eBGP
 Конструкт использования eBGP на уровне Underlay выглядит следующим образом:
 - Все коммутаторы уровня Spine принадлежат одной автономной системе (в нашем случае - 65000)
 - Коммутаторы уровня Spine принадлежат своим собственным AS, с последовательным ASN: swSpine01 - 65001, swSpine02 - 65002, swSpine03 - 65003 и так далее при необходимости.
 
-Такая архитектура позволяет избежать петель маршрутизации за счет применения механизма подавления петель eBGP между коммутаторами уровня Leaf, но потенциально создает проблему связанности между коммутаторами уровня Spine.
+![Схема AS](eBGP.png)
+
+Такая архитектура позволяет избежать петель маршрутизации за счет применения механизма подавления петель (AS-Path Loop Prevention) eBGP между коммутаторами уровня Leaf, но потенциально создает проблему связанности между коммутаторами уровня Spine.
 
 Рассмотрим пример, озвученный Андреем Блиновым:
 
 ![Пример](telegram-cloud-photo-size-2-5219960332686664353-y.jpg)
 
+Давайте рассмотрим детально. Исходя из конфигурации связей, трафик от Host1 к Host4 должен пойти по следующей траектории: Host1 -> Leaf1 -> Spine2 -> Leaf2 -> Spine1 -> Leaf3 -> Host4. Однако, даже коммутатор Leaf1 не будет ничего знать о сетях за коммутатором Leaf2. Причина кроется в том, что коммутаторы Spine отвергнут апдейты друг от друга, так как сработает защита механизма подавления петель. Речь об апдейтах пришедших в Spine со стороны Leaf'ов, содержащих префиксы интерфейсов обратных петель от других Spine'ов и, очевидно, имеющих в последовательности AS-Path свою же ASN.
+
+Для митигации этой проблемы можно воспользоваться двумя механизмами:
+1. На стороне коммутаторов уровня Spine, используя команду `allowas-in`, разрешить принимать маршруты со своей AS в пути AS-Path;
+2. На Leaf-коммутаторах настроить опцию `as-override`, изменяющей AS-Path для соответствующих префиксов (с моей точки зрения не самый элегантный метод).
+
+Я буду использовать механизм `allowas-in`, реализуя вариант минимализации расходования IPv4 через Link-local адреса (IPv6) p2p ребер.
+
+Начнем с подготовки анонсируемых префиксов. Стандартно, для этого используется директива `network` в контексте соответствующего стека (`address-family`), но более гибким вариантом является получение анонсируемых префиксов через редистрибьюцию по имени интерфейса. Кроме того, мы можем обеспечить чистоту RIB за счет фильтрации списка редистрибьюции - отобрать только используемые выше интерфейсы, используя для этого маршрутную карту:
+
+```config
+route-map rmapBGPRedistributeConnected permit 10
+   description --- BGP: Redistribute connection list
+   match interface Loopback0     ! Указываем список редистрибьюции через имя интерфейса
+   set origin igp                ! Меняем origin с incomplete на igp для редистрибьюированных интерфейсов
+```
+
+Я буду использовать его только для стека IPv4, но устанавливать соседство через IPv6 Link-local адрес. Теперь можно настроить контекст процесса:
+
+```ssh
+swSpine01(config)#router bgp 65000
+swSpine01(config-router-bgp)#router-id 10.1.0.1          ! Используем для идентификации Lo0
+swSpine01(config-router-bgp)#bgp log-neighbor-changes    ! Включаем журналирование сходимости
+swSpine01(config-router-bgp)#address-family ipv4
+swSpine01(config-router-bgp-af)#redistribute connected route-map rmapBGPRedistributeConnected
+```
+
+В операционной системе Arista EOS BGP-шаблоны реализуются через механизм Peer-Group. Шаблоны (Peer-Groups) позволяют сгруппировать общие настройки (например, номер автономной системы, политики фильтрации маршрутов, параметры таймеров) и применять их сразу к множеству соседей. Шаблон создается в контексте соответствующего экземпляра BGP-процесса:
+
+```ssh
+swSpine01(config-router-bgp)#neighbor tmpUnderlay2Leaf peer group                ! Создаем шаблон
+```
+
+Я только создал шаблон (он пока пуст), чтобы потом было удобно реконфигуровать все соседства одновременно.
+
+Теперь любые реконфигурации шаблона будут производиться и в настройках соседства, созданных через этот шаблон. Останется только перезапустить процесс для запуска процесса обмена апдейтами с измененными настройками.
+
+Так как я буду использовать IPv6 Link-local адреса для установления соседства, необходимо их определить:
+
+```
+swSpine01(config-router-bgp)#sh ipv6 neighbors
+IPv6 Address                                  Age Hardware Addr   Interface
+fe80::5200:ff:fed5:5dc0                   2:32:08 5000.00d5.5dc0  Et1
+fe80::5200:ff:fe03:3766                   2:39:57 5000.0003.3766  Et2
+fe80::5200:ff:fe15:f4e8                   2:33:50 5000.0015.f4e8  Et3
+```
+
+Теперь мы может описать соседство, указав не только Link-local адрес соседа (на всех портах коммутатора они будут одинаковые), но и физический порт, через который осуществляется подключение:
+
+```
+swSpine01(config-router-bgp)#neighbor fe80::5200:ff:fed5:5dc0%Et1 peer group tmpUnderlay2Leaf
+swSpine01(config-router-bgp)#neighbor fe80::5200:ff:fed5:5dc0%Et1 remote-as 65001
+swSpine01(config-router-bgp)#address-family ipv4
+swSpine01(config-router-bgp-af)#neighbor fe80::5200:ff:fed5:5dc0%Et1 activate
+```
+
+где суффикс `Et1` указывает на интерфейс `Ethernet1`.
+
+> В этой конфигурации стоит отметить следующий момент: не следует изменять интерфейс-источник для апдейтов в сторону соседа на интерфейс(например, на интерфейс локальной петли через команду `update-source loopback 0`), так как он будет отброшен апдейт из-за строгого механизма валидации TCP-соединения: несоответствия на своей стороне поля `neighbor` и `update-source`, которое мы не сможем устранить без дополнительного указания маршрута к удаленному интерфейсу локальной петли.
+
+Теперь мы можем проверить функционирование соседства:
+
+```
+swSpine01#sh bgp summary
+BGP summary information for VRF default
+Router identifier 10.1.0.1, local AS number 65000
+Neighbor                             AS Session State AFI/SAFI                AFI/SAFI State   NLRI Rcd   NLRI Acc
+--------------------------- ----------- ------------- ----------------------- -------------- ---------- ----------
+fe80::5200:ff:fed5:5dc0%Et1       65001 Established   IPv4 Unicast            Negotiated              0          0
+```
+
+Здесь мы видим, что соседство установлено (`Established`), но коммутатор не полуает ни одного NLRI (Network Layer Reachability Information), несмотря на то, что редистрибьюция настроена.
+
+Проверим, попадает ли она в локальную таблицу BGP:
+
+```
+swSpine01#sh ip bgp
+BGP routing table information for VRF default
+Router identifier 10.1.0.1, local AS number 65000
+Route status codes: s - suppressed contributor, * - valid, > - active, E - ECMP head, e - ECMP
+                    S - Stale, c - Contributing to ECMP, b - backup, L - labeled-unicast
+                    % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI Origin Validation codes: V - valid, I - invalid, U - unknown
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  AIGP       LocPref Weight  Path
+ * >      10.1.0.1/32            -                     -       -          -       0       i
+```
+
+Как видно, префикс локального интерфейса Lo0 присутствует, он валиден и активен, но у него нет параметра `Next-Hop`, так как в рамках самого коммутатора он и не нужен. И вот что здесь происходит: когда Spine пытается отправить маршрут 10.1.0.1/32 в сторону Leaf, по стандарту BGP он обязан указать в качестве Next Hop свой собственный IP-адрес. Но у Spine на интерфейсе в сторону Leaf есть только Link-local IPv6-адрес. Он не может просто так передать IPv6-адрес в качестве Next Hop для IPv4-сети внутри стандартного обновления, потому что Leaf ожидает там увидеть 32-битный IPv4-адрес. Так как Spine «не знает», какой IPv4 Next Hop поставить для этого анонса, он блокирует отправку маршрута:
+
+```
+swSpine01#sh bgp neighbors fe80::5200:ff:fed5:5dc0%Et1 advertised-routes
+BGP routing table information for VRF default
+Router identifier 10.1.0.1, local AS number 65000
+Route status codes: s - suppressed contributor, * - valid, > - active, E - ECMP head, e - ECMP
+                    S - Stale, c - Contributing to ECMP, b - backup, L - labeled-unicast, q - Queued for advertisement
+                    % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI Origin Validation codes: V - valid, I - invalid, U - unknown
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  AIGP       LocPref Weight  Path
+```
+
+Митигация этой проблемы в случае оборудования Arista требует смены подхода, используя для установления соседства не IPv6 Link-local адрес, а интерфейс, с которого устанавливается соседство:
+
+```
+swSpine01#sh run sec bgp
+route-map rmapBGPRedistributeConnected permit 10
+   description --- BGP: Redistribute connection list
+   match interface Loopback0
+   set origin igp
+router bgp 65000
+   router-id 10.1.0.1
+   neighbor tmpUnderlay2Leaf peer group
+   neighbor interface Et1 peer-group tmpUnderlay2Leaf remote-as 65001
+   !
+   address-family ipv4
+      neighbor tmpUnderlay2Leaf activate
+      neighbor tmpUnderlay2Leaf next-hop address-family ipv6 originate  ! Разрешить анонсировать IPv6 адрес в качестве параметра next-hop
+      redistribute connected route-map rmapBGPRedistributeConnected
+```
+
+Теперь проверим анонсы:
+
+```
+swSpine01#sh bgp neighbors fe80::5200:ff:fed5:5dc0%Et1 advertised-routes
+BGP routing table information for VRF default
+Router identifier 10.1.0.1, local AS number 65000
+Route status codes: s - suppressed contributor, * - valid, > - active, E - ECMP head, e - ECMP
+                    S - Stale, c - Contributing to ECMP, b - backup, L - labeled-unicast, q - Queued for advertisement
+                    % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI Origin Validation codes: V - valid, I - invalid, U - unknown
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  AIGP       LocPref Weight  Path
+ * >      10.1.0.1/32            fe80::5200:ff:fed7:ee0b%Et1 -       -          -       -       65000 i
+```
+
+Аналогичные настройки имеет и Leaf-коммутатор:
+
+```
+swLeaf01#sh run section bgp
+route-map rmapBGPRedistributeConnected permit 10
+   description --- BGP: Redistribute connection list
+   match interface Loopback0
+   set origin igp
+router bgp 65001
+   router-id 10.1.2.1
+   neighbor tmpUnderlay2Spine peer group
+   neighbor interface Et1 peer-group tmpUnderlay2Spine remote-as 65000
+   !
+   address-family ipv4
+      neighbor tmpUnderlay2Spine activate
+      neighbor tmpUnderlay2Spine next-hop address-family ipv6 originate
+      redistribute connected route-map rmapBGPRedistributeConnected
+```
+
+Проверим состояние соседства:
+
+```
+swSpine01#show bgp summary
+BGP summary information for VRF default
+Router identifier 10.1.0.1, local AS number 65000
+Neighbor                             AS Session State AFI/SAFI                AFI/SAFI State   NLRI Rcd   NLRI Acc
+--------------------------- ----------- ------------- ----------------------- -------------- ---------- ----------
+fe80::5200:ff:fed5:5dc0%Et1       65001 Established   IPv4 Unicast            Negotiated              1          1
+```
+
+Перенесем настройки на все коммутаторы фабрики.
+
+Теперь если сравнить вывод RIB на стороне Spine и Leaf, увидим следующее:
+
+```
+swSpine01#sh ip route
+
+VRF: default
+Source Codes:
+       C - connected, S - static, K - kernel,
+       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
+       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
+       N2 - OSPF NSSA external type2, B - Other BGP Routes,
+       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
+       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
+       A O - OSPF Summary, NG - Nexthop Group Static Route,
+       V - VXLAN Control Service, M - Martian,
+       DH - DHCP client installed default route,
+       DP - Dynamic Policy Route, L - VRF Leaked,
+       G  - gRIBI, RC - Route Cache Route,
+       CL - CBF Leaked Route
+
+Gateway of last resort is not set
+
+ C        10.1.0.1/32 [0/0]
+           via Loopback0, directly connected
+ B E      10.1.2.1/32 [200/0]
+           via fe80::5200:ff:fed5:5dc0, Ethernet1
+ B E      10.1.2.2/32 [200/0]
+           via fe80::5200:ff:fe03:3766, Ethernet2
+ B E      10.1.2.3/32 [200/0]
+           via fe80::5200:ff:fe15:f4e8, Ethernet3
+
+swLeaf01#sh ip route
+
+VRF: default
+Source Codes:
+       C - connected, S - static, K - kernel,
+       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
+       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
+       N2 - OSPF NSSA external type2, B - Other BGP Routes,
+       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
+       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
+       A O - OSPF Summary, NG - Nexthop Group Static Route,
+       V - VXLAN Control Service, M - Martian,
+       DH - DHCP client installed default route,
+       DP - Dynamic Policy Route, L - VRF Leaked,
+       G  - gRIBI, RC - Route Cache Route,
+       CL - CBF Leaked Route
+
+Gateway of last resort is not set
+
+ B E      10.1.0.1/32 [200/0]
+           via fe80::5200:ff:fed7:ee0b, Ethernet1
+ B E      10.1.0.2/32 [200/0]
+           via fe80::5200:ff:fecb:38c2, Ethernet2
+ C        10.1.2.1/32 [0/0]
+           via Loopback0, directly connected
+ B E      10.1.2.2/32 [200/0]
+           via fe80::5200:ff:fed7:ee0b, Ethernet1
+ B E      10.1.2.3/32 [200/0]
+           via fe80::5200:ff:fed7:ee0b, Ethernet1
+```
+
+Коммутаторы Spine не знают ничего друг о друге: это результат работы BGP AS-Path Loop Prevention, о котором шла речь ранее. Если посмотреть на списки анонсированных со стороны Leaf:
+
+```
+swLeaf01#sh bgp neighbors fe80::5200:ff:fed7:ee0b%Et1 advertised-routes
+BGP routing table information for VRF default
+Router identifier 10.1.2.1, local AS number 65001
+Route status codes: s - suppressed contributor, * - valid, > - active, E - ECMP head, e - ECMP
+                    S - Stale, c - Contributing to ECMP, b - backup, L - labeled-unicast, q - Queued for advertisement
+                    % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI Origin Validation codes: V - valid, I - invalid, U - unknown
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  AIGP       LocPref Weight  Path
+ * >      10.1.0.2/32            fe80::5200:ff:fed5:5dc0%Et1 -       -          -       -       65001 65000 i
+ * >      10.1.2.1/32            fe80::5200:ff:fed5:5dc0%Et1 -       -          -       -       65001 i
+```
+
+и полученных на стороне Spine маршрутов:
+
+```
+swSpine01#sh bgp neighbors fe80::5200:ff:fed5:5dc0%Et1 received-routes
+BGP routing table information for VRF default
+Router identifier 10.1.0.1, local AS number 65000
+Route status codes: s - suppressed contributor, * - valid, > - active, E - ECMP head, e - ECMP
+                    S - Stale, c - Contributing to ECMP, b - backup, L - labeled-unicast
+                    % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI Origin Validation codes: V - valid, I - invalid, U - unknown
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  AIGP       LocPref Weight  Path
+ * >      10.1.2.1/32            fe80::5200:ff:fed5:5dc0%Et1 -       -          -       -       65001 i
+```
+
+мы увидим `10.1.0.2/32` в полученных отсутствует, несмотря на то, что со стороны Leaf он анонсирован. Т.е., видно, что Spine его фильтрует, так как AS-Path содержит собственную ASN 65000.
+
+Разрешим принимать апдейты для своей же зоны на обоих Spine'ах, добавив в темплейт команду `neighbor tmpUnderlay2Leaf allowas-in 1`, где последняя `1` указывает на разверешнное количество включений ASN в полученный AS-Path префикса. Для архитектуры Clos в данной конфигурации - это один уровень.
+
+После мягкого перезапуска процессов (`lear bgp * soft`), проверим RIB:
+
+```
+swSpine01#sh ip route
+
+VRF: default
+Source Codes:
+       C - connected, S - static, K - kernel,
+       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
+       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
+       N2 - OSPF NSSA external type2, B - Other BGP Routes,
+       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
+       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
+       A O - OSPF Summary, NG - Nexthop Group Static Route,
+       V - VXLAN Control Service, M - Martian,
+       DH - DHCP client installed default route,
+       DP - Dynamic Policy Route, L - VRF Leaked,
+       G  - gRIBI, RC - Route Cache Route,
+       CL - CBF Leaked Route
+
+Gateway of last resort is not set
+
+ C        10.1.0.1/32 [0/0]
+           via Loopback0, directly connected
+ B E      10.1.0.2/32 [200/0]
+           via fe80::5200:ff:fed5:5dc0, Ethernet1
+ B E      10.1.2.1/32 [200/0]
+           via fe80::5200:ff:fed5:5dc0, Ethernet1
+ B E      10.1.2.2/32 [200/0]
+           via fe80::5200:ff:fe03:3766, Ethernet2
+ B E      10.1.2.3/32 [200/0]
+           via fe80::5200:ff:fe15:f4e8, Ethernet3
+```
+
+и связанность с ним:
+
+```
+swSpine01#ping 10.1.0.2
+PING 10.1.0.2 (10.1.0.2) 72(100) bytes of data.
+80 bytes from 10.1.0.2: icmp_seq=1 ttl=64 time=5.20 ms
+80 bytes from 10.1.0.2: icmp_seq=2 ttl=64 time=3.52 ms
+80 bytes from 10.1.0.2: icmp_seq=3 ttl=64 time=3.55 ms
+80 bytes from 10.1.0.2: icmp_seq=4 ttl=64 time=3.63 ms
+80 bytes from 10.1.0.2: icmp_seq=5 ttl=64 time=3.25 ms
+
+--- 10.1.0.2 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 25ms
+rtt min/avg/max/mdev = 3.248/3.830/5.201/0.697 ms, ipg/ewma 6.346/4.486 ms
+```
+
+Будем считать основной функционал настроенным.
+
+#### Вариант iBGP
 
 
 
-расщепления горизонта (Split Horizon) на уровне коммутаторов Spine (они принадлежат одной AS).
-
-
-Однако, если мы рассмотрим
-
-
-Вполне логично, что это не создаст нам проблем , так как Spine-коммутаторы будут связаны через уровень Leaf и транзита апдейтов между собой производить не будут.
-
-Однако, здесь есть другая особенность: на 
 
 
 
 
 
+
+
+
+
+
+
+
+
+По умолчанию (если просто ввести allowas-in) Arista разрешает появление вашей AS в пути 1 раз. Если вам нужно разрешить больше, можно указать число в конце команды (например, allowas-in 3 позволит принять префикс, даже если ваша AS встречается в AS-Path до 3 раз).
+Где это нужно: Обычно применяется в архитектурах дата-центров (например, в дизайне Spine-and-Leaf, когда все Leaf-коммутаторы используют одну и ту же приватную AS для экономии номеров) или в MPLS L3VPN сценариях, где удаленные офисы клиента имеют одинаковый ASN
+
+
+
+В терминологии BGP понятия часто переплетаются. Когда говорят про «мягкие» механизмы обновления без падения сессий, обычно имеют в виду два разных механизма, которые часто путают из-за схожести названий:Soft Reset (Мягкий сброс сессии) — то, что мы обсуждали шагом ранее (динамическое обновление таблиц маршрутов).Graceful Restart (Плавный перезапуск) — механизм, который защищает сеть от прерывания трафика, если процесс BGP или сам роутер действительно уходит в перезагрузку.
+
+
+
+
+
+
+
+
+
+
+
+
+Так как в полученном от leaf2 пути уже содержится номер 65000 (который принадлежит spine1), коммутатор spine1 в стандартной ситуации отбросил бы этот маршрут (так как видит в AS_PATH собственную AS).Для успешной работыоммутаторах настроена опция вроде as-override. Предполагаем, что одна из этих функций активна для обе такой топологии «излома» на фабрике eBGP на Spine-коммутаторах обязательно должна быть включена команда allowas-in (разрешающая принимать маршруты со своей AS в пути) или на Leaf-кспечения связности.
 
 
 
@@ -265,13 +617,6 @@ end
 
 
 при такой конфигурации, в классическом eBGP по умолчанию срабатает механизм предотвращения петель (AS_PATH Loop Prevention). 
-Так как в полученном от leaf2 пути уже содержится номер 65000 (который принадлежит spine1), коммутатор spine1 в стандартной ситуации отбросил бы этот маршрут (так как видит в AS_PATH собственную AS).Для успешной работы такой топологии «излома» на фабрике eBGP на Spine-коммутаторах обязательно должна быть включена команда allowas-in (разрешающая принимать маршруты со своей AS в пути) или на Leaf-коммутаторах настроена опция вроде as-override. Предполагаем, что одна из этих функций активна для обеспечения связности.
-
-
-
-
-
-
 
 Так как ISIS нативно поддерживает Dual-stack, настройку будем производить для наиболее интересного, с моей точки зрения варианта - протокола IPv4 с Unnumbered интерфейсами ребер связи (p2p).
 
