@@ -1,4 +1,4 @@
-# Lab03: Построение Underlay сети (BGP)
+# Lab04: Построение Underlay сети (BGP)
 
 ## Состав работы
 - [Условие задачи](#условие-задачи)
@@ -273,6 +273,9 @@ swSpine01(config-router-bgp)#bgp log-neighbor-changes    ! Включаем жу
 swSpine01(config-router-bgp)#address-family ipv4
 swSpine01(config-router-bgp-af)#redistribute connected route-map rmapBGPRedistributeConnected
 ```
+
+> **Важно!**
+> Underlay плоскость настраивается в GRT.
 
 В операционной системе Arista EOS BGP-шаблоны реализуются через механизм Peer-Group. Шаблоны (Peer-Groups) позволяют сгруппировать общие настройки (например, номер автономной системы, политики фильтрации маршрутов, параметры таймеров) и применять их сразу к множеству соседей. Шаблон создается в контексте соответствующего экземпляра BGP-процесса:
 
@@ -572,9 +575,96 @@ PING 10.1.0.2 (10.1.0.2) 72(100) bytes of data.
 rtt min/avg/max/mdev = 3.248/3.830/5.201/0.697 ms, ipg/ewma 6.346/4.486 ms
 ```
 
-Будем считать основной функционал настроенным.
+Будем считать основной функционал настроенным. Полная конфигурация Spine-коммутаторов:
+```
+route-map rmapBGPRedistributeConnected permit 10
+   description --- BGP: Redistribute connection list
+   match interface Loopback0
+   set origin igp
+!
+router bgp 65000
+   router-id 10.1.0.1
+   neighbor tmpUnderlay2Leaf peer group
+   neighbor tmpUnderlay2Leaf allowas-in 1
+   neighbor interface Et1 peer-group tmpUnderlay2Leaf remote-as 65001
+   neighbor interface Et2 peer-group tmpUnderlay2Leaf remote-as 65002
+   neighbor interface Et3 peer-group tmpUnderlay2Leaf remote-as 65003
+   !
+   address-family ipv4
+      neighbor tmpUnderlay2Leaf activate
+      neighbor tmpUnderlay2Leaf next-hop address-family ipv6 originate
+      redistribute connected route-map rmapBGPRedistributeConnected
+```
+
+и на стороне Spine'ов:
+
+```
+route-map rmapBGPRedistributeConnected permit 10
+   description --- BGP: Redistribute connection list
+   match interface Loopback0
+   set origin igp
+!
+router bgp 65001
+   router-id 10.1.2.1
+   neighbor tmpUnderlay2Spine peer group
+   neighbor interface Et1-2 peer-group tmpUnderlay2Spine remote-as 65000
+   !
+   address-family ipv4
+      neighbor tmpUnderlay2Spine activate
+      neighbor tmpUnderlay2Spine next-hop address-family ipv6 originate
+      redistribute connected route-map rmapBGPRedistributeConnected
+```
+
 
 #### Вариант iBGP
+В случае iBGP, все коммутаторы фабрики принадлежат одной и той же AS.
+
+![Схема AS](iBGP.png)
+
+При использовании внутреннего механизма предотвращения петель, мы сталкиваемся с проблемой фильтрации апдейтов на принимающей стороне с ASN своей же системы. Чтобы обойти эту особенность, нам на уровне Spine необходимо создать "отражатель маршрутов" в сторону коммутаров уровня Leaf.
+
+Как 
+
+
+Динамический тип организции соседства?!
+
+
+Работающая конфигурация для коммутаторов уровня Spine приведена ниже:
+
+```
+swSpine01#sh run sec bgp
+route-map rmapBGPRedistributeConnected permit 10
+   description --- BGP: Redistribute connection list
+   match interface Loopback0
+   set origin igp
+router bgp 65000
+   router-id 10.1.0.1
+   bgp listen range fe80::/10 peer-group tmpUnderlay2Leaf remote-as 65000
+   neighbor tmpUnderlay2Leaf peer group
+   !
+   address-family ipv4
+      neighbor tmpUnderlay2Leaf activate
+      neighbor tmpUnderlay2Leaf next-hop address-family ipv6 originate
+      redistribute connected route-map rmapBGPRedistributeConnected
+```
+
+```
+swLeaf01#sh run sec bgp
+route-map rmapBGPRedistributeConnected permit 10
+   description --- BGP: Redistribute connection list
+   match interface Loopback0
+   set origin igp
+router bgp 65000
+   router-id 10.1.2.1
+   neighbor tmpUnderlay2Spine peer group
+   neighbor tmpUnderlay2Spine next-hop-self
+   neighbor interface Et1-2 peer-group tmpUnderlay2Spine remote-as 65000
+   !
+   address-family ipv4
+      neighbor tmpUnderlay2Spine activate
+      neighbor tmpUnderlay2Spine next-hop address-family ipv6 originate
+      redistribute connected route-map rmapBGPRedistributeConnected
+```
 
 
 
@@ -588,233 +678,10 @@ rtt min/avg/max/mdev = 3.248/3.830/5.201/0.697 ms, ipg/ewma 6.346/4.486 ms
 
 
 
-
-
-
-По умолчанию (если просто ввести allowas-in) Arista разрешает появление вашей AS в пути 1 раз. Если вам нужно разрешить больше, можно указать число в конце команды (например, allowas-in 3 позволит принять префикс, даже если ваша AS встречается в AS-Path до 3 раз).
-Где это нужно: Обычно применяется в архитектурах дата-центров (например, в дизайне Spine-and-Leaf, когда все Leaf-коммутаторы используют одну и ту же приватную AS для экономии номеров) или в MPLS L3VPN сценариях, где удаленные офисы клиента имеют одинаковый ASN
 
 
 
 В терминологии BGP понятия часто переплетаются. Когда говорят про «мягкие» механизмы обновления без падения сессий, обычно имеют в виду два разных механизма, которые часто путают из-за схожести названий:Soft Reset (Мягкий сброс сессии) — то, что мы обсуждали шагом ранее (динамическое обновление таблиц маршрутов).Graceful Restart (Плавный перезапуск) — механизм, который защищает сеть от прерывания трафика, если процесс BGP или сам роутер действительно уходит в перезагрузку.
-
-
-
-
-
-
-
-
-
-
-
-
-Так как в полученном от leaf2 пути уже содержится номер 65000 (который принадлежит spine1), коммутатор spine1 в стандартной ситуации отбросил бы этот маршрут (так как видит в AS_PATH собственную AS).Для успешной работыоммутаторах настроена опция вроде as-override. Предполагаем, что одна из этих функций активна для обе такой топологии «излома» на фабрике eBGP на Spine-коммутаторах обязательно должна быть включена команда allowas-in (разрешающая принимать маршруты со своей AS в пути) или на Leaf-кспечения связности.
-
-
-
-
-
-
-при такой конфигурации, в классическом eBGP по умолчанию срабатает механизм предотвращения петель (AS_PATH Loop Prevention). 
-
-Так как ISIS нативно поддерживает Dual-stack, настройку будем производить для наиболее интересного, с моей точки зрения варианта - протокола IPv4 с Unnumbered интерфейсами ребер связи (p2p).
-
-> **Важно!**
-> Underlay плоскость настраивается в GRT.
-
-Начнем настройку с коммутатора swSpine01. Создадим процесс ISIS с именем `Underlay` глобально:
-```
-swSpine01(config)#router isis Underlay
-swSpine01(config-router-isis)#net 49.0001.0100.0100.0001.00
-swSpine01(config-router-isis)#is-type level-2
-swSpine01(config-router-isis)#passive loopback 0               ! Включит ISIS на интерфейсе и переведет их в пассивный режим в контексте соответствующего интерфеса
-swSpine01(config-router-isis)#hello padding disabled           ! Отключает раздувание пакетов Hello до максимального MTU
-swSpine01(config-router-isis)#log-adjacency-changes            ! Производить журналирование событий сходимости
-swSpine01(config-router-isis)#address-family ipv4 unicast      ! Без указания версии стека ISIS не будет запущен
-swSpine01(config-router-isis-af)#maximum-paths 64              ! Настройка ECMP: максимальное количество путей
-wSpine01(config-router-isis-af)#bfd all-interfaces
-```
-
-> По умолчанию, при включении IS-IS на интерфейсе, маршрутизатор пытается отправлять через него Hello-пакеты, чтобы найти соседей. Поскольку Loopback — это виртуальный интерфейс «внутри себя», слать туда Hello-пакеты бессмысленно.
-
-Проверить состояние можно с помощью кломанды:
-```
-swSpine01#sh isis summary 
- 
-IS-IS Instance: Underlay VRF: default
-  Instance ID: 0
-  System ID: 0100.0100.0001, administratively enabled
-  Router ID: IPv4: 10.1.0.1
-  Hostname: swSpine01
-  Multi Topology disabled, not attached
-  IPv4 Preference: Level 1: 115, Level 2: 115
-  IPv6 Preference: Level 1: 115, Level 2: 115
-  IS-Type: Level 2, Number active interfaces: 1
-  Routes IPv4 only
-  LSP size maximum: Level 1: 1492, Level 2: 1492
-                            Max wait(s) Initial wait(ms) Hold interval(ms)
-  LSP Generation Interval:     5              50               50
-  SPF Interval:                2            1000             1000
-  Current SPF hold interval(ms): Level 1: 0, Level 2: 1000
-  Last Level 2 SPF run 33 seconds ago
-  CSNP generation interval: 10 seconds
-  Dynamic Flooding: Disabled
-  Authentication mode: Level 1: None, Level 2: None
-  Graceful Restart: Disabled, Graceful Restart Helper: Enabled
-  Area addresses: 49.0001
-  level 2: number DIS interfaces: 0, LSDB size: 1
-    Area Leader: None
-    Overload Bit is not set. 
-  Redistributed Level 1 routes: 0 limit: Not Configured
-  Redistributed Level 2 routes: 0 limit: Not Configured
-```
-
-Далее, настраиваем контекст интерфейсов. Локальная петля:
-```
-interface Loopback0
-   isis enable Underlay
-```
-
-> Перевести режим интерфейса в пассивный можно и в контексте самого интерфейса с помощью команды `isis passive`.
-
-и интерфейсы ребер p2p:
-```
-swSpine01(config)#interface ethernet 1 - 3
-swSpine01(config-if-Et1)#isis enable Underlay
-swSpine01(config-if-Et1)#isis network point-to-point
-```
-
-Аналогичные настройки распространим на остальные коммутаторы схемы.
-
-После настройки всех коммутаторов, проверим соседство:
-```
-swSpine01#sh isis neighbors detail 
- 
-Instance  VRF      System Id        Type Interface          SNPA              State Hold time   Circuit Id          
-Underlay  default  swLeaf01         L2   Ethernet1          P2P               UP    29          0F                  
-  Area addresses: 49.0001
-  SNPA: P2P
-  Router ID: 0.0.0.0
-  Advertised Hold Time: 30
-  State Changed: 09:59:41 ago at 2026-08-20 21:09:13
-  IPv4 Interface Address: 10.1.2.1
-  IPv6 Interface Address: none
-  Interface name: Ethernet1
-  Graceful Restart: Supported 
-  BFD IPv4 state is Up
-  Supported Address Families: IPv4
-  Neighbor Supported Address Families: IPv4
-Underlay  default  swLeaf02         L2   Ethernet2          P2P               UP    22          0F                  
-  Area addresses: 49.0001
-  SNPA: P2P
-  Router ID: 0.0.0.0
-  Advertised Hold Time: 30
-  State Changed: 00:08:59 ago at 2026-08-21 06:59:55
-  IPv4 Interface Address: 10.1.2.2
-  IPv6 Interface Address: none
-  Interface name: Ethernet2
-  Graceful Restart: Supported 
-  BFD IPv4 state is Up
-  Supported Address Families: IPv4
-  Neighbor Supported Address Families: IPv4
-Underlay  default  swLeaf03         L2   Ethernet3          P2P               UP    22          0F                  
-  Area addresses: 49.0001
-  SNPA: P2P
-  Router ID: 0.0.0.0
-  Advertised Hold Time: 30
-  State Changed: 00:00:25 ago at 2026-08-21 07:08:29
-  IPv4 Interface Address: 10.1.2.3
-  IPv6 Interface Address: none
-  Interface name: Ethernet3
-  Graceful Restart: Supported 
-  BFD IPv4 state is Up
-  Supported Address Families: IPv4
-  Neighbor Supported Address Families: IPv4
-```
-
-База данных:
-```
-swSpine01#sh isis database 
-
-IS-IS Instance: Underlay VRF: default
-  IS-IS Level 2 Link State Database
-    LSPID                   Seq Num  Cksum  Life Length IS Flags
-    swSpine01.00-00              50  57384   985    110 L2 <>
-    swSpine02.00-00               3  29942   989     99 L2 <>
-    swLeaf01.00-00               48  44526   857     87 L2 <>
-    swLeaf02.00-00                3  58056   633     98 L2 <>
-    swLeaf03.00-00                3  40456   989     98 L2 <>
-
-```
-
-Как видно, база данных ISIS содержит все устройства фабрики.
-
-Проверим RIB:
-```
-swSpine01#sh ip route isis 
-
-VRF: default
-Codes: C - connected, S - static, K - kernel, 
-       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
-       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
-       N2 - OSPF NSSA external type2, B - Other BGP Routes,
-       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
-       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
-       A O - OSPF Summary, NG - Nexthop Group Static Route,
-       V - VXLAN Control Service, M - Martian,
-       DH - DHCP client installed default route,
-       DP - Dynamic Policy Route, L - VRF Leaked,
-       G  - gRIBI, RC - Route Cache Route
-
- I L2     10.1.0.2/32 [115/30] via 10.1.2.2, Ethernet2
-                               via 10.1.2.3, Ethernet3
- I L2     10.1.2.1/32 is directly connected, Ethernet1
- I L2     10.1.2.2/32 is directly connected, Ethernet2
- I L2     10.1.2.3/32 is directly connected, Ethernet3
-```
-
-и связанность со всеми коммутаторами фабрики:
-```
-swSpine01#ping 10.1.0.2 repeat 1
-PING 10.1.0.2 (10.1.0.2) 72(100) bytes of data.
-80 bytes from 10.1.0.2: icmp_seq=1 ttl=63 time=24.9 ms
-
---- 10.1.0.2 ping statistics ---
-1 packets transmitted, 1 received, 0% packet loss, time 4ms
-rtt min/avg/max/mdev = 24.956/24.956/24.956/0.000 ms
-swSpine01#ping 10.1.2.1 repeat 1
-PING 10.1.2.1 (10.1.2.1) 72(100) bytes of data.
-80 bytes from 10.1.2.1: icmp_seq=1 ttl=64 time=7.89 ms
-
---- 10.1.2.1 ping statistics ---
-1 packets transmitted, 1 received, 0% packet loss, time 0ms
-rtt min/avg/max/mdev = 7.892/7.892/7.892/0.000 ms
-swSpine01#ping 10.1.2.2 repeat 1
-PING 10.1.2.2 (10.1.2.2) 72(100) bytes of data.
-80 bytes from 10.1.2.2: icmp_seq=1 ttl=64 time=13.1 ms
-
---- 10.1.2.2 ping statistics ---
-1 packets transmitted, 1 received, 0% packet loss, time 0ms
-rtt min/avg/max/mdev = 13.189/13.189/13.189/0.000 ms
-swSpine01#ping 10.1.2.3 repeat 1
-PING 10.1.2.3 (10.1.2.3) 72(100) bytes of data.
-80 bytes from 10.1.2.3: icmp_seq=1 ttl=64 time=9.77 ms
-
---- 10.1.2.3 ping statistics ---
-1 packets transmitted, 1 received, 0% packet loss, time 0ms
-rtt min/avg/max/mdev = 9.779/9.779/9.779/0.000 ms
-```
-
-На этом основной функционал можно счить настроенным.
-
-Дополнительно следует отметить, что настройку типа связи возможно было произвести и в контексте интерфейса, используя команду `isis circuit-type level-2`. Однако, это имеет смысл, когда роутер работает в режиме Level-1-2.
-
-> **ВНИМАНИЕ!**
->
-> Необходимо убедиться, что L3 MTU строго совпадает на обоих концах провода, либо отключить дополнение пакетов командой no `isis hello padding` в контексте интерфейса или глобально - в контексте экземпляра процесса ISIS (`hello padding disabled`).
->
-> На современных скоростных интерфейсах (10G, 25G, 100G, 400G) стандартных значений от 1 до 63 физически не хватает для адекватного рассчета стоимости путей. Более того, если в сети больше 16 хопов с максимальной метрикой, общая стоимость превысит 1023, и сеть просто перестанет сходиться. Для митигации необходимо использовать расширенные метрики (`metric-style wide`) вместо классических (`narrow`). В текущих версиях, в инженеры Arista полностью убрали из кода поддержку старых 6-битных (narrow) метрик, посчитав их устаревшим рудиментом.
 
 ### Тюниннг и дополнительные настройки
 Ниже собраны дополнительные настройки, которые могут применяться факультативно для Arista EOS.
