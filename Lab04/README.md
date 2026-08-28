@@ -926,8 +926,8 @@ BGP Confederation (Конфедерация BGP) — это метод масш�
 | **Кому нужен next-hop-self** | Обычно **не требуется** | **Необходим** на пограничных роутерах для обеспечения достижимости eBGP-маршрутов внутри AS | **Требуется**, если нужно принудительно терминировать Data Plane на стыке суб-AS в BGP Unnumbered фабриках |
 | **Передача Local Preference** | **Запрещена**. Атрибут сбрасывается при выходе из AS | **Разрешена**. Свободно передается внутри всей AS | **Разрешена** (поведение iBGP). Атрибут прозрачно проходит сквозь границы суб-AS |
 | **Передача MED** | **Разрешена** только между соседними AS (по умолчанию не передается дальше) | **Разрешена**. Транслируется внутри всей AS | **Разрешена** (наследуется от iBGP). Сохраняется и передается между суб-AS без сброса |
-| **Значение TTL по-умолчанию** | **TTL = 1**. Соседи должны быть соединены физические | **TTL = 255**. Соседи могут находиться в разных концах сети, связность обеспечивает IGP | TTL = 255 (наследуется от iBGP) |
-| **Ограничение топологии (Full Mesh)** | *Не требуется*. Топология может быть любой | **Требуется** Full Mesh или обход через Route Reflectors | Не требуется (наследуется от eBGP) |
+| **Значение TTL по-умолчанию** | **TTL = 1**. Соседи должны быть соединены физические | **TTL = 255**. Соседи могут находиться в разных концах сети, связность обеспечивает IGP | **TTL = 255** (наследуется от iBGP) |
+| **Ограничение топологии (Full Mesh)** | **Не требуется**. Топология может быть любой | **Требуется** Full Mesh или обход через Route Reflectors | **Не требуется** (наследуется от eBGP) |
 | **Отображение в AS-Path** | Номер AS пишется как обычное число в списке | Номер AS не добавляется в путь при передаче внутри системы | Номера суб-AS пишутся внутри сегментов AS_CONFED_SEQUENCE в скобках (например, (65001) |
 | **Поведение при выходе из сети** | Остается в неизменном виде в глобальном BGP-апдейте | При выходе наружу в eBGP роутер дописывает номер локальной Public AS | Все скобки и номера суб-AS строго вырезаются, а вместо них подставляется одна внешняя Public AS |
 
@@ -935,28 +935,151 @@ BGP Confederation (Конфедерация BGP) — это метод масш�
 
 ![Схема AS](eBGP.png)
 
+Начнем со следуюшей конфигурации на swSpine01:
 
+```
+swSpine01(config-router-bgp-af)#sh run sec bgp
+route-map rmapBGPRedistributeConnected permit 10
+   description --- BGP: Redistribute connection list
+   match interface Loopback0
+   set origin igp
+router bgp 65000
+   router-id 10.1.0.1
+   bgp log-neighbor-changes
+   neighbor tmpUnderlay2Leaf peer group
+   !
+   address-family ipv4
+      neighbor tmpUnderlay2Leaf activate
+      neighbor tmpUnderlay2Leaf next-hop address-family ipv6 originate
+      redistribute connected route-map rmapBGPRedistributeConnected
+```
 
+Так как в конфидерации параметр nex-hop не меняется (и BGP ведет себя как iBGP), произведем замену на свой адрес при передаче соседу:
 
+```
+swSpine01(config-router-bgp)#address-family ipv4
+swSpine01(config-router-bgp-af)#neighbor tmpUnderlay2Leaf next-hop-self
+swSpine01(config-router-bgp-af)#exit
+```
 
+Далее, необходимо описать инфраструктуру конфидерации:
 
+```
+swSpine01(config-router-bgp)#bgp confederation identifier 65500      ! Указываем идентификатор AS - это виртуальная AS, которая будет включать все ASN Spine'ов и Leaf'ов
+swSpine01(config-router-bgp)#bgp confederation peers 65001 - 65100   ! Указываем валидные sub-AS
+```
 
+Зададим соседство динамически: Spine'ы будут отвечать любым Leaf'ам, запрашивающим соединение. В формате Arita, передать в динамический "слушатель" можно либо одну ASN, либо несколько через фильтр. Создадим его:
 
+```
+swSpine01(config-router-bgp)#peer-filter pfrBGPLeafs
+swSpine01(config-peer-filter-pfrBGPLeafs)#description --- List of valide Leafs
+swSpine01(config-peer-filter-pfrBGPLeafs)#match as-range 65001-65100 result accept
+```
 
+и передадим в "слушатель":
 
+```
+swSpine01(config-peer-filter-pfrBGPLeafs)#router bgp 65000
+swSpine01(config-router-bgp)#bgp listen range fe80::/10 peer-group tmpUnderlay2Leaf peer-filter pfrBGPLeafs
+```
 
+После этого, можно перейти к настройке первого лифа swLeaf01, начальная конфигурация которого следующая:
 
+```
+swLeaf01(config-router-bgp-af)#sh run sec bgp
+route-map rmapBGPRedistributeConnected permit 10
+   description --- BGP: Redistribute connection list
+   match interface Loopback0
+   set origin igp
+router bgp 65001
+   router-id 10.1.2.1
+   bgp log-neighbor-changes
+   neighbor tmpUnderlay2Spine peer group
+   !
+   address-family ipv4
+      neighbor tmpUnderlay2Spine activate
+      neighbor tmpUnderlay2Spine next-hop address-family ipv6 originate
+      redistribute connected route-map rmapBGPRedistributeConnected
+```
 
+Далее, необходимо произвести настройки конфидерации, указав Public AS (65500) и соседа, имеющего собственный ASN:
 
+```
+swLeaf01(config-router-bgp)#bgp confederation identifier 65500
+swLeaf01(config-router-bgp)#bgp confederation peers 65000
+```
 
+Можно попробовать установить соседство:
 
+```
+swLeaf01(config-router-bgp)#neighbor interface Et1 peer-group tmpUnderlay2Spine remote-as 65000
+```
 
+Соседство установится, но будет проблема, связанная с блокировкой путей к Spine'ам со стороны транзитных Leaf'ов, когда изолированные Spine'ы находятся в одной суб-AS.
 
+Если посмотреть, что swLeaf01 получает от Spine01 и что анонсирует в ответ:
 
+```
+swLeaf01#sh bgp neighbors fe80::5200:ff:fed7:ee0b%Et1 received-routes
+BGP routing table information for VRF default
+Router identifier 10.1.2.1, local AS number 65001
+Route status codes: s - suppressed contributor, * - valid, > - active, E - ECMP head, e - ECMP
+                    S - Stale, c - Contributing to ECMP, b - backup, L - labeled-unicast
+                    % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI Origin Validation codes: V - valid, I - invalid, U - unknown
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
 
-В терминологии BGP понятия часто переплетаются. Когда говорят про «мягкие» механизмы обновления без падения сессий, обычно имеют в виду два разных механизма, которые часто путают из-за схожести названий:Soft Reset (Мягкий сброс сессии) — то, что мы обсуждали шагом ранее (динамическое обновление таблиц маршрутов).Graceful Restart (Плавный перезапуск) — механизм, который защищает сеть от прерывания трафика, если процесс BGP или сам роутер действительно уходит в перезагрузку.
+          Network                Next Hop              Metric  AIGP       LocPref Weight  Path
+ * >      10.1.0.1/32            fe80::5200:ff:fed7:ee0b%Et1 -       -          100     -       (65000) i
+ * >      10.1.2.2/32            fe80::5200:ff:fed7:ee0b%Et1 -       -          100     -       (65000 65002) i
+ * >      10.1.2.3/32            fe80::5200:ff:fed7:ee0b%Et1 -       -          100     -       (65000 65003) i
+
+swLeaf01#sh bgp neighbors fe80::5200:ff:fed7:ee0b%Et1 advertised-routes
+BGP routing table information for VRF default
+Router identifier 10.1.2.1, local AS number 65001
+Route status codes: s - suppressed contributor, * - valid, > - active, E - ECMP head, e - ECMP
+                    S - Stale, c - Contributing to ECMP, b - backup, L - labeled-unicast, q - Queued for advertisement
+                    % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI Origin Validation codes: V - valid, I - invalid, U - unknown
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  AIGP       LocPref Weight  Path
+ * >      10.1.2.1/32            fe80::5200:ff:fed5:5dc0%Et1 -       -          100     -       (65001) i
+```
+
+видно, он что он получает от swSpine1 префикс на локальную петлю, но не передает его в сторону второго спайна (swSpine02).
+
+И Leaf ее всё равно не отдаст, потому что ядро Arista EOS выполняет Loop Prevention еще до того, как роутер вообще посмотрит на любой route-map, будь он на входе или на выходе. Программными хаками этот встроенный в код механизм предотвращения петель конфедерации обойти невозможно.
+
+Технически, можно собрать следующий костыль на стороне Spine'ов:
+```
+swSpine01(config)#ip route 10.1.0.2/32 10.1.2.1
+swSpine01(config)#ip route 10.1.0.2/32 10.1.2.2
+swSpine01(config)#ip route 10.1.0.2/32 10.1.2.3
+```
+
+как и в варианте iBGP.
+
+#### Выводы и выбор варианта
+> Официальная позиция Arista Networks:
+> Arista категорически не рекомендует использовать BGP Конфедерации (RFC 5065) для построения современных Underlay-сетей в Spine-Leaf фабриках.
+> Если в iBGP-дизайне два Спайна изолированы друг от друга (нет Inter-Spine линка), стандартный механизм конфедераций создает мертвую петлю фильтрации на Лифах. Arista рекомендует решать это единственным архитектурным способом — полным переходом на eBGP Underlay (дизайн RFC 7938).
+
+Со своей стороны хочу еще раз подчеркнуть, что при всех возможных выгодах, использование BGP в Underlay-слое лично с моей точки зрения является спорным.
+
+Далее буду использовать версию eBGP.
 
 ### Тюниннг и дополнительные настройки
+
+
+
+
+
+
+
 Ниже собраны дополнительные настройки, которые могут применяться факультативно для Arista EOS.
 
 #### Защита от перегрузки при загрузке
