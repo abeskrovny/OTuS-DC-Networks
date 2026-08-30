@@ -266,55 +266,6 @@ login:
 ```
 
 ## Предварительная очистка до фабричных настроек
-Сброс настроек на JunOS производится следующим образом:
-```
-root@vqfx-re:RE:0% cli
-{master:0}
-
-root@swSpine01> configure
-Entering configuration mode
-
-{master:0}[edit]
-
-root@swSpine01# load factory-default
-warning: activating factory configuration
-
-root@swSpine01# commit
-[edit]
-  'system'
-    Missing mandatory statement: 'root-authentication'
-error: commit failed: (missing mandatory statements)
-```
-
-Конфигурация загружена, но не проходит коммит.
-
-Эта ошибка возникает потому, что на заводской конфигурации Juniper (ZTP) не задан пароль для пользователя root, а операционная система Junos запрещает применять любые изменения (commit), пока этот пароль не будет установлен. Это базовое требование безопасности Juniper.
-
-
-
-Juniper, как и все современные производители запускают сервис ZTP (Zero Touch Provisioning), которая на всех доступных интерфейсах устанавливает DHCP-клиента.
-
-```
-root@swSpine01# wildcard delete interfaces .*
-  matched: et-0/0/0
-  matched: xe-0/0/0:0
-  matched: xe-0/0/0:1
-  matched: xe-0/0/0:2
-  matched: xe-0/0/0:3
-  matched: et-0/0/1
-  matched: xe-0/0/1
-  matched: xe-0/0/1:0
-  ...
-Delete 409 objects? [yes,no] (no) yes
-
-{master:0}[edit]
-root@swSpine01# commit
-configuration check succeeds
-commit complete
-
-{master:0}[edit]
-```
-
 После этого конфигурация приобретает удобное состояние для первоначальной ручной настройки:
 ```
 root@swSpine01# show
