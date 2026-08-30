@@ -319,7 +319,7 @@ swSpine01(config-router-bgp-af)#neighbor fe80::5200:ff:fed5:5dc0%Et1 activate
 
 где суффикс `Et1` указывает на интерфейс `Ethernet1`.
 
-> В этой конфигурации стоит отметить следующий момент: не следует изменять интерфейс-источник для апдейтов в сторону соседа на интерфейс(например, на интерфейс локальной петли через команду `update-source loopback 0`), так как апдейт будет отброшен из-за строгого механизма валидации TCP-соединения: несоответствия на своей стороне поля `neighbor` и `update-source`, которое мы не сможем устранить без дополнительного указания маршрута к удаленному интерфейсу локальной петли.
+> В этой конфигурации стоит отметить следующий момент: не следует изменять интерфейс-источник для апдейтов в сторону соседа на интерфейс (например, на интерфейс локальной петли через команду `update-source loopback 0`), так как апдейт будет отброшен из-за строгого механизма валидации TCP-соединения: несоответствия на своей стороне поля `neighbor` и `update-source`, которое мы не сможем устранить без дополнительного указания маршрута к удаленному интерфейсу локальной петли.
 
 Теперь мы можем проверить функционирование соседства:
 
@@ -1170,6 +1170,69 @@ swLeaf01(config-router-bgp-af)#bgp bestpath as-path multipath-relax
 ```
 
 Эту команду распространяют на все Leaf'ы фабрики.
+
+После распространения указанных настроек, таблица BGP будет иметь следующий вид:
+
+```
+swSpine01(config-unit-bgp)#sh ip bgp
+BGP routing table information for VRF default
+Router identifier 10.1.0.1, local AS number 65000
+Route status codes: s - suppressed contributor, * - valid, > - active, E - ECMP head, e - ECMP
+                    S - Stale, c - Contributing to ECMP, b - backup, L - labeled-unicast
+                    % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI Origin Validation codes: V - valid, I - invalid, U - unknown
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  AIGP       LocPref Weight  Path
+ * >      10.1.0.1/32            -                     -       -          -       0       i
+ * >Ec    10.1.0.2/32            fe80::5200:ff:fe03:3766%Et2 0       -          100     0       65002 65000 i
+ *  ec    10.1.0.2/32            fe80::5200:ff:fe15:f4e8%Et3 0       -          100     0       65003 65000 i
+ *  ec    10.1.0.2/32            fe80::5200:ff:fed5:5dc0%Et1 0       -          100     0       65001 65000 i
+ * >      10.1.2.1/32            fe80::5200:ff:fed5:5dc0%Et1 0       -          100     0       65001 i
+ *  E     10.1.2.1/32            fe80::5200:ff:fe03:3766%Et2 0       -          100     0       65002 65000 65001 i
+ *  e     10.1.2.1/32            fe80::5200:ff:fe15:f4e8%Et3 0       -          100     0       65003 65000 65001 i
+ * >      10.1.2.2/32            fe80::5200:ff:fe03:3766%Et2 0       -          100     0       65002 i
+ *        10.1.2.2/32            fe80::5200:ff:fed5:5dc0%Et1 0       -          100     0       65001 65000 65002 i
+ * >      10.1.2.3/32            fe80::5200:ff:fe15:f4e8%Et3 0       -          100     0       65003 i
+ *        10.1.2.3/32            fe80::5200:ff:fed5:5dc0%Et1 0       -          100     0       65001 65000 65003 i
+```
+
+а таблица маршрутизации:
+
+```
+swSpine01(config-unit-bgp)#sh ip route
+
+VRF: default
+Source Codes:
+       C - connected, S - static, K - kernel,
+       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
+       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
+       N2 - OSPF NSSA external type2, B - Other BGP Routes,
+       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
+       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
+       A O - OSPF Summary, NG - Nexthop Group Static Route,
+       V - VXLAN Control Service, M - Martian,
+       DH - DHCP client installed default route,
+       DP - Dynamic Policy Route, L - VRF Leaked,
+       G  - gRIBI, RC - Route Cache Route,
+       CL - CBF Leaked Route
+
+Gateway of last resort is not set
+
+ C        10.1.0.1/32 [0/0]
+           via Loopback0, directly connected
+ B E      10.1.0.2/32 [200/0]
+           via fe80::5200:ff:fed5:5dc0, Ethernet1
+           via fe80::5200:ff:fe03:3766, Ethernet2
+           via fe80::5200:ff:fe15:f4e8, Ethernet3
+ B E      10.1.2.1/32 [200/0]
+           via fe80::5200:ff:fed5:5dc0, Ethernet1
+ B E      10.1.2.2/32 [200/0]
+           via fe80::5200:ff:fe03:3766, Ethernet2
+ B E      10.1.2.3/32 [200/0]
+           via fe80::5200:ff:fe15:f4e8, Ethernet3
+```
 
 #### UCMP — Балансировка по несовпадающей стоимости
 Классический ECMP делит трафик строго поровну (50/50). Eсли коммутатор swSpine01 подключен портом 40G, а swSpine02 — через линк 10G. ECMP пустит туда одинаковый объем трафика, что мгновенно перегрузит и «уронит» 10G-линк, в то время как 40G-линк будет простаивать.
