@@ -265,15 +265,44 @@ swSpine01 (ttyd0)
 login:
 ```
 
-## Предварительная очистка до фабричных настроек
+## Первоначальная настройка
+Схема подключений стенда имеет следующий вид:
+
+![Схема стенда: Underlay](SchemeUnderlay.png)
+
 После этого конфигурация приобретает удобное состояние для первоначальной ручной настройки:
 ```
-root@swSpine01# show
-## Last changed: 2026-08-30 13:33:53 UTC
+root@vqfx-re# show
+## Last changed: 2026-08-30 19:00:04 UTC
 version 20.3R1.8;
 system {
+    host-name vqfx-re;
     root-authentication {
-        encrypted-password "$6$xy0BPUN1$xtjjSl/PPFUzQIMITOybWxirmFxGLA60OCLW7WI0A0grIMJnGrdT3cAGRDgmexLimfGA7F6HzOCUlalPVrri3."; ## SECRET-DATA
+        encrypted-password "$6$qwIDF/35$sQ8xBVZioJaf8ZkiPqXGYMPURFw2YfrASAoGwgHRK2uPbop5M5HjELmT/JHNrGeNNAo9vCqPNNKgji8oFZNlT."; ## SECRET-DATA
+        ssh-rsa "ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA6NF8iallvQVp22WDkTkyrtvp9eWW6A8YVr+kz4TjGYe7gHzIw+niNltGEFHzD8+v1I2YJ6oXevct1YeS0o9HZyN1Q9qgCgzUFtdOKLv6IedplqoPkcmF0aYet2PkEDo3MlTBckFXPITAMzF8dJSIFo9D8HfdOV0IAdx4O7PtixWKn5y2hMNG0zQPyUecp4pzC6kivAIhyfHilFR61RGL+GPXQ2MWZWFYbAGjyiYJnAmCP3NOTd0jMZEnDkbUvxhMmBYSdETk1rRgm+R4LOzFUGaHqHDLKLX+FIPKcF96hrucXzcWyLbIbEgE98OHlnVYCzRdK8jlqm8tehUc9c9WhQ== vagrant insecure public key"; ## SECRET-DATA
+    }
+    login {
+        user vagrant {
+            uid 2000;
+            class super-user;
+            authentication {
+                ssh-rsa "ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA6NF8iallvQVp22WDkTkyrtvp9eWW6A8YVr+kz4TjGYe7gHzIw+niNltGEFHzD8+v1I2YJ6oXevct1YeS0o9HZyN1Q9qgCgzUFtdOKLv6IedplqoPkcmF0aYet2PkEDo3MlTBckFXPITAMzF8dJSIFo9D8HfdOV0IAdx4O7PtixWKn5y2hMNG0zQPyUecp4pzC6kivAIhyfHilFR61RGL+GPXQ2MWZWFYbAGjyiYJnAmCP3NOTd0jMZEnDkbUvxhMmBYSdETk1rRgm+R4LOzFUGaHqHDLKLX+FIPKcF96hrucXzcWyLbIbEgE98OHlnVYCzRdK8jlqm8tehUc9c9WhQ== vagrant insecure public key"; ## SECRET-DATA
+            }
+        }
+    }
+    services {
+        ssh {
+            root-login allow;
+        }
+        netconf {
+            ssh;
+        }
+        rest {
+            http {
+                port 8080;
+            }
+            enable-explorer;
+        }
     }
     syslog {
         user * {
@@ -298,6 +327,15 @@ system {
         }
     }
 }
+interfaces {
+    em1 {
+        unit 0 {
+            family inet {
+                address 169.254.0.2/24;
+            }
+        }
+    }
+}
 forwarding-options {
     storm-control-profiles default {
         all;
@@ -313,9 +351,10 @@ vlans {
         vlan-id 1;
     }
 }
+
+{master:0}[edit]
 ```
 
-## Первоначальная настройка
 В рамках первоначальной настройки нам необходимо настроить интерфейс локальной петли lo0.0, используемой для Underlay-слоя и p2p интерфейсы, являющиеся гранями, соединяющими Spine'ы и Leaf'ы фабрики. Будем использовать на них unnumbered.
 ```
 set interfaces lo0.0 family inet address 10.1.0.1/32
