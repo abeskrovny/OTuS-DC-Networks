@@ -575,6 +575,7 @@ set protocols ospf area 0.0.0.0 interface xe-0/0/1.0 bfd-liveness-detection mini
 set protocols ospf area 0.0.0.0 interface xe-0/0/1.0 bfd-liveness-detection multiplier 3
 set protocols ospf area 0.0.0.0 interface xe-0/0/2.0 bfd-liveness-detection minimum-interval 100
 set protocols ospf area 0.0.0.0 interface xe-0/0/2.0 bfd-liveness-detection multiplier 3
+```
 
 То есть, если в течение 300 мс (3 х 100 мс) от соседа не пришло ни одного BFD-пакета, OSPF-сессия будет мгновенно разорвана.
 
