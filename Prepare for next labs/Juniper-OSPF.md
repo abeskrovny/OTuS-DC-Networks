@@ -314,6 +314,27 @@ swLeaf01 (ttyd0)
 login:
 ```
 
+Но следует обратить внимание на то, что в текущей сессии карта может "подключиться" не к слоту 0, например:
+```
+root@swLeaf01> show chassis fpc
+                     Temp  CPU Utilization (%)   CPU Utilization (%)  Memory    Utilization (%)
+Slot State            (C)  Total  Interrupt      1min   5min   15min  DRAM (MB) Heap     Buffer
+  0  Empty
+  1  Online           Testing  56         7        0      0      0    1920        0         44
+  2  Empty
+  3  Empty
+  4  Empty
+  5  Empty
+  6  Empty
+  7  Empty
+  8  Empty
+  9  Empty
+```
+
+что создаст неработоспособную конфигурацию для виртуального коммутатора.
+
+Я вылечил перезагрузкой. Все следующие загрузки системы произведились правильно.
+
 Либо, что является более вандальным вариантом, можно удалить базы, используемые сервисом Virtual Chassis из окружения командного процессора (`start shell`):
 ```
 rm -f /config/vctopo.db
@@ -331,7 +352,7 @@ exit && reboot
 
 ![Схема стенда: Underlay](SchemeUnderlay.png)
 
-После этого конфигурация приобретает удобное состояние для первоначальной ручной настройки:
+После удаления интерфейсов, конфигурация приобретает удобное состояние для первоначальной ручной настройки:
 ```
 root@vqfx-re# show
 ## Last changed: 2026-08-30 19:00:04 UTC
@@ -416,7 +437,20 @@ vlans {
 {master:0}[edit]
 ```
 
-В рамках первоначальной настройки нам необходимо настроить интерфейс локальной петли lo0.0, используемой для Underlay-слоя и p2p интерфейсы, являющиеся гранями, соединяющими Spine'ы и Leaf'ы фабрики. Будем использовать на них unnumbered.
+Начнем с настройки коммутатора swSpine01. Настройка остальных коммутаторов во многом аналогична. 
+
+Произведем следующие настройки:
+```
+set system host-name swSpine01              ! Задаем системное имя устройства
+set system domain-name Underlay.local       ! Указываем DNS-домен
+
+set protocols lldp interface all            ! Включаем протокол LLDP
+set protocols lldp-med interface all        ! Включаем расширение LLDP-MED
+
+set chassis network-services enhanced-ip    ! Включение оптимизации распределения обработки трафика между PFE и RE
+```
+
+В рамках первоначальной настройки нам необходимо настроить интерфейс локальной петли lo0.0, используемой для Underlay-слоя и p2p интерфейсы, являющиеся гранями, соединяющими Spine'ы и Leaf'ы фабрики. Будем использовать на гранях unnumbered с Link-local IPv6 адресом для Inbound-управления.
 ```
 set interfaces lo0.0 family inet address 10.1.0.1/32
 set interfaces lo0 description "--- Virtual (no VRF, no VLAN): Underlay Control Plane"
@@ -439,7 +473,7 @@ root@swSpine01# exit
 Exiting configuration mode
 
 {master:0}
-root@swSpine01> ping 10.1.0.1
+root@swSpine01> ping 10.1.0.1 count 2
 PING 10.1.0.1 (10.1.0.1): 56 data bytes
 64 bytes from 10.1.0.1: icmp_seq=0 ttl=64 time=2.599 ms
 64 bytes from 10.1.0.1: icmp_seq=1 ttl=64 time=0.628 ms
@@ -453,31 +487,214 @@ round-trip min/avg/max/stddev = 0.628/3.130/8.534/3.216 ms
 {master:0}
 ```
 
-Далее, необходимо настроить интерфейсы `xe0/0/0-2`, участвующие в p2p, включив в них IPv6 link-local адрес (используемых для подключения в случае аварии). Настроим интерфейс `xe-0/0/0`, а остальные скопируем:
+Далее, необходимо настроить интерфейсы `xe0/0/0-2`, участвующие в p2p, включив в них IPv6 link-local адрес (используемых для подключения в случае аварии). Настроим интерфейс `xe-0/0/0`:
 ```
-set interfaces xe-0/0/0 mtu 9214
-set interfaces xe-0/0/0 unit 0 family inet unnumbered-address lo0.0
-set interfaces xe-0/0/0 unit 0 family inet6
+set interfaces xe-0/0/0 unit 0 family inet unnumbered-address lo0.0 ! Используем адрес lo0 для включения протокола IPv4 и установления OSPF-соседства
+set interfaces xe-0/0/0 unit 0 family inet6     ! Включаем протокол IPv6 для генерации Link-local адреса.и использования в рамках In-Band управления
 ```
 
+а остальные скопируем (также в контексте конфигурирования):
+```
+copy interfaces xe-0/0/0 to xe-0/0/1
+copy interfaces xe-0/0/0 to xe-0/0/2
+```
 
-
-
+Осталось добавить описания:
 ```
 set interfaces xe-0/0/0 description "--- L3 (no VRF, no VLAN): p2p connection to swLeaf01:xe0/0/0"
 set interfaces xe-0/0/1 description "--- L3 (no VRF, no VLAN): p2p connection to swLeaf02:xe0/0/1"
 set interfaces xe-0/0/2 description "--- L3 (no VRF, no VLAN): p2p connection to swLeaf02:xe0/0/2"
 ```
 
-Однако, если 
-Это абсолютно нормальное и стандартное поведение стека IPv6 в Junos при использовании конфигурации BGP Unnumbered / Unnumbered-address.
+После произведенных действий интерфейсы p2p получат Link-local адреса, но не будет работать сервис Router Advertisement - мы не будем видить соседей, а команда `show ipv6 neighbors` будет иметь нулевой вывод.
 
-Пока вы не запустили трафик, интерфейс находится в режиме экономии ресурсов и не шлёт фоновые широковещательные NDP-запросы (Neighbor Solicitation) просто так. Как только вы делаете ping, ядро Junos инициирует поиск соседа, отправляет NDP, получает ответ и заносит запись в таблицу — после чего show ipv6 neighbors начинает его видеть.
+Это абсолютно нормальное и стандартное поведение стека IPv6 в Junos. Пока не поступит трафик, интерфейс будет находится в режиме экономии ресурсов и не будет слать фоновые широковещательные NDP-запросы (Neighbor Solicitation). 
 
-Чтобы в вашей Clos-фабрике всё работало автоматически и вам не приходилось пинговать соседей вручную для построения eBGP-сессий, примените следующие настройки:
+Однако, если произвести ping соседа, ядро Junos инициирует его поиск, отправит NDP, на что получит ответ и запишет соседский Link-local адрес в таблицу — после чего show ipv6 neighbors начинает его видеть.
 
+Чтобы заставить коммутатор сразу включить сервис обнаружения, можно либо включить его на конкретном интерфейсе:
+```
 set protocols router-advertisement interface xe-0/0/0.0
+```
+
+либо глобально:
+```
 set protocols router-advertisement interface all
+```
+
+После чего (если настроить и ответные стороны), соседство будет иметь вид, аналогичный следующему:
+```
+root@swSpine01# run show ipv6 neighbors
+IPv6 Address                            Linklayer Address  State       Exp   Rtr  Secure  Interface
+fe80::205:86ff:fe71:2103                 02:05:86:71:21:03  stale       410   yes  no      xe-0/0/1.0
+fe80::205:86ff:fe71:2a03                 02:05:86:71:2a:03  stale       101   yes  no      xe-0/0/2.0
+fe80::205:86ff:fe71:a803                 02:05:86:71:a8:03  stale       569   yes  no      xe-0/0/0.0
+Total entries: 3
+
+{master:0}[edit]
+```
+
+Теперь в случае расхождения связанности к какому-то коммутатору, можно будет осуществить доступ через его Link-local IPv6-адрес, подключившись, например, следующим образом:
+```
+root@swSpine02> ssh fe80::205:86ff:fe71:2607
+The authenticity of host 'fe80::205:86ff:fe71:2607 (fe80::205:86ff:fe71:2607)' can't be established.
+ECDSA key fingerprint is SHA256:tDUQi+3Wvgv8dwZOIVqJNZwi3AzUCF26+Q4JcrBZVB4.
+Are you sure you want to continue connecting (yes/no)? yes
+Warning: Permanently added 'fe80::205:86ff:fe71:2607' (ECDSA) to the list of known hosts.
+Password:
+root@swSpine01:RE:0%
+```
+
+### 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Поскольку вы строите фабрику EVPN/VXLAN, инкапсуляция VXLAN добавляет к каждому пакету ровно 50 байт оверхеда (заголовки сокетов UDP, VXLAN и внешний IP-заголовок). Если ваш клиент внутри сети отправит стандартный пакет размером 1500 байт, Leaf-коммутатор упакует его в VXLAN, и на Spine полетит кадр размером 1550 байт.
+
+Если на Spine или Leaf L2 MTU останется равен 1500, коммутаторы начнут дропать реальный клиентский трафик.
+
+Правильная настройка для фабрики:
+Чтобы фабрика работала без потерь, физический линк (L2) делают больше («Jumbo Frames»), а для служебных протоколов самого коммутатора (OSPF, IS-IS, BGP, SSH) оставляют стандартный IP MTU.
+
+```
+# 1. Поднимаем L2 MTU с запасом для VXLAN (до Jumbo-кадров)
+set interfaces xe-0/0/0 mtu 9216
+
+# 2. Ограничиваем IP MTU для системного трафика (OSPF/BGP/SSH), 
+# чтобы unnumbered lo0.0 не генерировал пакеты по 16кб
+set interfaces xe-0/0/0 unit 0 family inet mtu 1500
+
+commit and-quit
+```
+
+
+
+В конфигурации Juniper:
+set interfaces xe-0/0/0 mtu 9216 — это L2 MTU (Media MTU). Он определяет максимальный размер всего Ethernet-кадра, включая заголовки L2, который физический (или виртуальный) порт способен отправить или принять.
+set interfaces xe-0/0/0 unit 0 family inet mtu 1500 — это L3 MTU (Protocol MTU). Он определяет максимальный размер IP-пакета (полезной нагрузки внутри Ethernet-кадра).
+
+
+root@swSpine01# set interfaces xe-0/0/0 unit 0 family inet6 mtu 1500
+
+
+
+
+Чтобы оверлей работал длинными пакетами, нужно идти в противоположную сторону — не уменьшать L3 MTU, а увеличивать L2 MTU (Jumbo Frames) на пути между Leaf и Spine.
+
+Идеальная конфигурация для линков внутри фабрики (Underlay):
+set interfaces xe-0/0/0 mtu 9216
+set interfaces xe-0/0/0 unit 0 family inet mtu 9000
+
+mtu 9216 (на физическом интерфейсе): Гарантирует, что любые VXLAN-пакеты (1550 байт, 1600 байт или даже Jumbo-кадры от клиентов) пролетят между Leaf и Spine без ограничений.
+family inet mtu 9000 (на логическом): Защитит стек самого Junos. Теперь lo0.0 при генерации SSH или OSPF будет нарезать пакеты по 9000 байт. А так как физический порт готов принимать до 9216 байт, пакеты проскочат мгновенно (при условии, что вы подняли MTU в самом EVE-NG, как мы обсуждали в предыдущем шаге).
+
+
+Жёсткие 16384 байт вшиты в ядро системы
+
+
+
+EVE-NG:
+cp /opt/unetlab/html/includes/config.php.distribution /opt/unetlab/html/includes/config.php
+
+
+<?php
+// TEMPLATE MODE .missing or .hided
+DEFINE('TEMPLATE_DISABLED','.hided') ;
+$TEMPLATE_MTU = 9216;
+?>
+
+
+```
+root@swSpine01> show interfaces lo0
+Physical interface: lo0, Enabled, Physical link is Up
+  Interface index: 6, SNMP ifIndex: 6
+  Description: --- Virtual (no VRF, no VLAN): Underlay Control Plane
+  Type: Loopback, MTU: Unlimited
+  Device flags   : Present Running Loopback
+  Interface flags: SNMP-Traps
+  Link flags     : None
+  Last flapped   : Never
+    Input packets : 43741
+    Output packets: 43741
+
+  Logical interface lo0.0 (Index 548) (SNMP ifIndex 16)
+    Flags: SNMP-Traps Encapsulation: Unspecified
+    Input packets : 26
+    Output packets: 26
+    Protocol inet, MTU: Unlimited
+    Max nh cache: 0, New hold nh limit: 0, Curr nh cnt: 0, Curr new hold cnt: 0,
+    NH drop cnt: 0
+      Flags: Sendbcast-pkt-to-re
+      Addresses, Flags: Is-Default Is-Primary
+        Local: 10.1.0.1
+    Protocol inet6, MTU: Unlimited
+    Max nh cache: 0, New hold nh limit: 0, Curr nh cnt: 0, Curr new hold cnt: 0,
+    NH drop cnt: 0
+      Flags: None
+        Local: fe80::205:860f:fc71:c500
+...
+```
+Вывод Protocol inet, MTU: Unlimited наглядно показывает корень проблемы: в вашей версии Junos для виртуального интерфейса lo0.0 значение MTU определено как Unlimited (Без ограничений).
+
+Когда вы запускаете SSH-сессию, использующую unnumbered-адрес этого интерфейса, Junos пытается отправить огромный пакет, который физически не может быть фрагментирован или передан через виртуальные линки EVE-NG.
+
+Поскольку изменить MTU для lo0 или заставить его фрагментировать пакеты стандартными методами в Junos невозможно, единственный способ наладить BGP и SSH в такой схеме — отказаться от unnumbered-address на интерфейсах Underlay-сети (стыках Leaf-Spine).
+
+
+
+Вариант 2. TCP MSS Clamping для BGP и системного трафика
+Документация Juniper предлагает использовать механизм TCP MSS для контроля размера пакетов управляющих протоколов, если под ними лежит Jumbo-линк.
+Поскольку вы будете настраивать BGP, чтобы его сессии (и SSH) не падали из-за фрагментации, добавьте в конфигурацию BGP:
+set protocols bgp group <имя_группы> tcp-mss 1024
+
+
+run ping 10.1.2.1 size 8500 do-not-fragment source 10.1.0.1
+
+
+
+[root@hstLAB01:~] esxcli network vswitch standard set -m 9000 -v vSwitch0
+[root@hstLAB01:~] esxcli network ip interface set -m 9000 -i vmk0
+
+root@vmEVE-NG:~# ping -M do -s 8972 10.1.10.11
+PING 10.1.10.11 (10.1.10.11) 8972(9000) bytes of data.
+8980 bytes from 10.1.10.11: icmp_seq=1 ttl=64 time=0.193 ms
+8980 bytes from 10.1.10.11: icmp_seq=2 ttl=64 time=0.222 ms
+8980 bytes from 10.1.10.11: icmp_seq=3 ttl=64 time=0.133 ms
+^C
+--- 10.1.10.11 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2056ms
+rtt min/avg/max/mdev = 0.133/0.182/0.222/0.037 ms
+
+root@vmEVE-NG:~# for i in $(ls /sys/class/net/); do ip link set dev $i mtu 9000 2>/dev/null; done
+
 
 
 
