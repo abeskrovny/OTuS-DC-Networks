@@ -7,8 +7,6 @@ Juniper vQFX — это виртуализированный аналог выс
 
 Основная особенность архитектуры vQFX заключается в её двухнодовой структуре (Twin-VM). В отличие от монолитных виртуальных роутеров (например, vMX), vQFX разделен на две независимые виртуальные машины (ноды): Routing Engine (RE) и Packet Forwarding Engine (PFE). Это полностью повторяет разделение плоскостей управления (Control Plane) и передачи данных (Data Plane) в реальных модульных коммутаторах Juniper.
 
-![Модель](ModelToChange.png)
-
 Разберем компоненты:
 - **Компонент управления: vQFX-RE (Routing Engine)**. Виртуальная машина vQFX-RE отвечает за Control Plane (плоскость управления). На ней запущена полноценная операционная система Junos OS (FreeBSD).
     - *Функции*: 
@@ -171,7 +169,7 @@ Slot State            (C)  Total  Interrupt      1min   5min   15min  DRAM (MB) 
 {master:0}[edit]
 ```
 
-Слот `0` находится в состоянии `Online`, следовательно в неконфигурационном режиме мы должны будем увидеть "присутствующие" интерфейсы.
+Слот `0` находится в состоянии `Online`, следовательно в режиме мониторинга мы должны будем увидеть "присутствующие" интерфейсы.
 
 ```
 root@vqfx-re# exit
@@ -545,144 +543,314 @@ Password:
 root@swSpine01:RE:0%
 ```
 
-### 
+## Настройка слоя Underlay с использованием OSPF
+Получив связанность между соседями, можно перейти к процессу настройки OSPF.
 
+В операционной системе Junos процессы динамической маршрутизации полностью изолированы от ядра ОС и выполняются в рамках единого модульного демона rpd (Routing Protocol Daemon), который управляет таблицами маршрутизации (RIB) в контексте Control Plane.
 
+В отличие от Cisco IOS/XE, где протоколы маршрутизации исторически выполнялись как отдельные экземпляры в общем пространстве памяти ядра (хоть и изолированные в более поздних архитектурах IOS-XE через субпроцессы), или модульной Arista EOS, где каждый протокол представляет собой независимый агент (например, Rib, Bgp), взаимодействующий через централизованную базу данных состояний SysDB, подход Juniper гарантирует, что сбой в работе одного протокола внутри rpd не дестабилизирует ОС, однако падение самого демона перезапускает всю маршрутизацию целиком.
 
+Ключевое архитектурное отличие Junos заключается в жестком разделении таблиц маршрутизации (inet.0, inet6.0) и таблиц продвижения пакетов (FIB/forwarding-table), при этом программирование линейных карт (PFE) происходит асинхронно через ядро только на основе активных маршрутов, выбранных rpd. Если в Cisco и Arista политики маршрутизации (Route-Maps) применяются динамически «снизу вверх» в процессе обработки апдейтов и конфигурация сразу влияет на RIB, то в Junos механизм policy-options интегрирован на уровне ядра самого rpd как сквозной компилируемый конвейер. Любое изменение импортных или экспортных фильтров требует явной валидации и коммита (commit), после чего rpd атомарно пересчитывает RIB и пушит изменения в FIB, что исключает появление промежуточных аномалий маршрутизации и делает поведение Control Plane в Junos наиболее предсказуемым среди всех трех вендоров.
 
+В операционной системе Junos идентификатор router-id настраивается на уровне `routing-options` и по умолчанию является единым для всех протоколов в рамках конкретной таблицы маршрутизации.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Поскольку вы строите фабрику EVPN/VXLAN, инкапсуляция VXLAN добавляет к каждому пакету ровно 50 байт оверхеда (заголовки сокетов UDP, VXLAN и внешний IP-заголовок). Если ваш клиент внутри сети отправит стандартный пакет размером 1500 байт, Leaf-коммутатор упакует его в VXLAN, и на Spine полетит кадр размером 1550 байт.
-
-Если на Spine или Leaf L2 MTU останется равен 1500, коммутаторы начнут дропать реальный клиентский трафик.
-
-Правильная настройка для фабрики:
-Чтобы фабрика работала без потерь, физический линк (L2) делают больше («Jumbo Frames»), а для служебных протоколов самого коммутатора (OSPF, IS-IS, BGP, SSH) оставляют стандартный IP MTU.
-
+> Однако он не строго глобален для всего устройства, так как может быть изолированно переопределен внутри каждого отдельного экземпляра маршрутизации (`routing-instance`) или точечно изменен в параметрах конкретного протокола (например, через `protocols bgp router-id`). При этом модульный демон `rpd` строго требует уникальности этого значения в пределах одного домена маршрутизации, а в случае отсутствия явной конфигурации автоматически выбирает в качестве `router-id` первичный (primary) IPv4-адрес петлевого интерфейса lo0.0 либо наибольший IP-адрес активного физического порта, без которого запуск OSPF или BGP станет невозможным:
 ```
-# 1. Поднимаем L2 MTU с запасом для VXLAN (до Jumbo-кадров)
-set interfaces xe-0/0/0 mtu 9216
-
-# 2. Ограничиваем IP MTU для системного трафика (OSPF/BGP/SSH), 
-# чтобы unnumbered lo0.0 не генерировал пакеты по 16кб
-set interfaces xe-0/0/0 unit 0 family inet mtu 1500
-
-commit and-quit
+set routing-options router-id 10.1.0.1
 ```
 
+Сама же настройка OSPF достаточно тривиальна:
+```
+set protocols ospf area 0.0.0.0 interface lo0.0 passive
+set protocols ospf area 0.0.0.0 interface xe-0/0/0.0 interface-type p2p
+set protocols ospf area 0.0.0.0 interface xe-0/0/1.0 interface-type p2p
+set protocols ospf area 0.0.0.0 interface xe-0/0/2.0 interface-type p2p
+```
 
+Сразу включим BFD на гранях p2p и установим интервал ожидания в 100 мс, коэффициент удержания (детектор потерь) в 3 потерянных пакета:
+```
+set protocols ospf area 0.0.0.0 interface xe-0/0/0.0 bfd-liveness-detection minimum-interval 100
+set protocols ospf area 0.0.0.0 interface xe-0/0/0.0 bfd-liveness-detection multiplier 3
+set protocols ospf area 0.0.0.0 interface xe-0/0/1.0 bfd-liveness-detection minimum-interval 100
+set protocols ospf area 0.0.0.0 interface xe-0/0/1.0 bfd-liveness-detection multiplier 3
+set protocols ospf area 0.0.0.0 interface xe-0/0/2.0 bfd-liveness-detection minimum-interval 100
+set protocols ospf area 0.0.0.0 interface xe-0/0/2.0 bfd-liveness-detection multiplier 3
 
-В конфигурации Juniper:
-set interfaces xe-0/0/0 mtu 9216 — это L2 MTU (Media MTU). Он определяет максимальный размер всего Ethernet-кадра, включая заголовки L2, который физический (или виртуальный) порт способен отправить или принять.
-set interfaces xe-0/0/0 unit 0 family inet mtu 1500 — это L3 MTU (Protocol MTU). Он определяет максимальный размер IP-пакета (полезной нагрузки внутри Ethernet-кадра).
+То есть, если в течение 300 мс (3 х 100 мс) от соседа не пришло ни одного BFD-пакета, OSPF-сессия будет мгновенно разорвана.
 
+Из функциональных механизмов осталось настроить ECMP. Он настраивается через политику балансировки:
+```
+set policy-options policy-statement polECMP then load-balance consistent-hash
+```
 
-root@swSpine01# set interfaces xe-0/0/0 unit 0 family inet6 mtu 1500
+где:
+- **policy-options policy-statement polECMP** — создание или редактирование именованной политики маршрутизации с названием polECMP.
+- **then load-balance** — указывает, что при совпадении условий маршрута (в данном случае условий from нет, значит, применяется ко всем), ядро Junos должно включить для этих префиксов режим балансировки трафика по нескольким путям (по умолчанию Junos выбирает только один лучший маршрут для установки в FIB, даже если в RIB их несколько).
+- **consistent-hash** — ключевая опция, которая активирует алгоритм согласованного хэширования за счет реализации концепции «Хэш-кольца» (Hash Ring), препятствующей перемешиванию пакетов из разных потоков (out-of-order).
 
+И применяем политику:
+```
+set routing-options forwarding-table export polECMP
+```
 
+Завершим настройку Underlay конфигурацией компонентов безопасности: необходимо защитить OSPF-соседство между Leaf'ами и Spine'ами от подмены маршрутов и несанкционированного подключения сторонних устройств.
 
+В современных сетях и согласно рекомендациям Juniper для безопасности OSPF используют криптографическое хэширование HMAC-SHA-256 (вместо устаревшего и уязвимого MD5). Сама аутентификация настраивается 
+в контексте интерфейсов:
+```
+set protocols ospf area 0.0.0.0 interface xe-0/0/0.0 authentication md5 1 key "P@ssw0rd"
+```
 
-Чтобы оверлей работал длинными пакетами, нужно идти в противоположную сторону — не уменьшать L3 MTU, а увеличивать L2 MTU (Jumbo Frames) на пути между Leaf и Spine.
+> В синтаксисе Junos ключевое слово 'md5' используется как контейнер для всех типов криптографических хэшей, алгоритм SHA-256 активируется автоматически, если длина ключа и синтаксис поддерживают его, либо задается через keychain.
 
-Идеальная конфигурация для линков внутри фабрики (Underlay):
+В результате, настройки OSPF будут иметь следующий вид:
+```
+root@swSpine01> show configuration routing-options
+forwarding-table {
+    export polECMP;
+}
+router-id 10.1.0.1;
+
+root@swSpine01> show configuration protocols ospf
+area 0.0.0.0 {
+    interface lo0.0 {
+        passive;
+    }
+    interface xe-0/0/0.0 {
+        interface-type p2p;
+        authentication {
+            md5 1 key "$9$l0ue8x7NVY4Z-V5F3nCAvWLX7V"; ## SECRET-DATA
+        }
+        bfd-liveness-detection {
+            minimum-interval 100;
+            multiplier 3;
+        }
+    }
+    interface xe-0/0/1.0 {
+        interface-type p2p;
+        authentication {
+            md5 1 key "$9$FyNL3Cpu01hyKO1b2g4ZG69Atu1"; ## SECRET-DATA
+        }
+        bfd-liveness-detection {
+            minimum-interval 100;
+            multiplier 3;
+        }
+    }
+    interface xe-0/0/2.0 {
+        interface-type p2p;
+        authentication {
+            md5 1 key "$9$f53/9CpBRSAp7Vbwg4QFn69p"; ## SECRET-DATA
+        }
+        bfd-liveness-detection {
+            minimum-interval 100;
+            multiplier 3;
+        }
+    }
+}
+```
+
+Распространим данные настройки на остальные коммутаторы фабрики.
+
+Проверим соседство:
+```
+root@swSpine01> show ospf neighbor
+Address          Interface              State           ID               Pri  Dead
+10.1.2.1         xe-0/0/0.0             Full            10.1.2.1         128    34
+10.1.2.2         xe-0/0/1.0             Full            10.1.2.2         128    32
+10.1.2.3         xe-0/0/2.0             Full            10.1.2.3         128    39
+```
+
+базу данных OSPF:
+```
+root@swSpine01> show ospf database
+
+    OSPF database, Area 0.0.0.0
+ Type       ID               Adv Rtr           Seq      Age  Opt  Cksum  Len
+Router  *10.1.0.1         10.1.0.1         0x80000732    51  0x22 0xc805  72
+Router   10.1.0.2         10.1.0.2         0x8000066a    27  0x22 0x553e  72
+Router   10.1.2.1         10.1.2.1         0x8000032f    26  0x22 0x84a8  60
+Router   10.1.2.2         10.1.2.2         0x8000059a    56  0x22 0xa11b  60
+Router   10.1.2.3         10.1.2.3         0x80000537   235  0x22 0x62ba  60
+```
+
+и полученные маршруты:
+```
+root@swSpine01> show ospf route
+Topology default Route Table:
+
+Prefix             Path  Route      NH       Metric NextHop       Nexthop
+                   Type  Type       Type            Interface     Address/LSP
+10.1.0.2           Intra Router     IP            2 xe-0/0/0.0    10.1.2.1
+                                                    xe-0/0/1.0    10.1.2.2
+                                                    xe-0/0/2.0    10.1.2.3
+10.1.2.1           Intra Router     IP            1 xe-0/0/0.0    10.1.2.1
+10.1.2.2           Intra Router     IP            1 xe-0/0/1.0    10.1.2.2
+10.1.2.3           Intra Router     IP            1 xe-0/0/2.0    10.1.2.3
+10.1.0.1/32        Intra Network    IP            0 lo0.0
+10.1.0.2/32        Intra Network    IP            2 xe-0/0/0.0    10.1.2.1
+                                                    xe-0/0/1.0    10.1.2.2
+                                                    xe-0/0/2.0    10.1.2.3
+10.1.2.1/32        Intra Network    IP            1 xe-0/0/0.0    10.1.2.1
+10.1.2.2/32        Intra Network    IP            1 xe-0/0/1.0    10.1.2.2
+10.1.2.3/32        Intra Network    IP            1 xe-0/0/2.0    10.1.2.3
+```
+
+RIB-таблицу:
+```
+root@swSpine01> show route
+
+inet.0: 8 destinations, 11 routes (8 active, 0 holddown, 0 hidden)
+@ = Routing Use Only, # = Forwarding Use Only
++ = Active Route, - = Last Active, * = Both
+
+10.1.0.1/32        *[Direct/0] 04:48:18
+                    >  via lo0.0
+10.1.0.2/32        *[OSPF/10] 00:00:04, metric 2
+                       to 10.1.2.2 via xe-0/0/1.0
+                    >  to 10.1.2.3 via xe-0/0/2.0
+10.1.2.1/32        @[OSPF/10] 00:00:04, metric 3
+                       to 10.1.2.2 via xe-0/0/1.0
+                    >  to 10.1.2.3 via xe-0/0/2.0
+                   #[Direct/0] 00:00:04, metric 1
+                    >  to 10.1.2.1 via xe-0/0/0.0
+10.1.2.2/32        @[OSPF/10] 00:02:45, metric 1
+                    >  to 10.1.2.2 via xe-0/0/1.0
+                   #[Direct/0] 00:02:50, metric 1
+                    >  to 10.1.2.2 via xe-0/0/1.0
+10.1.2.3/32        @[OSPF/10] 00:05:56, metric 1
+                    >  to 10.1.2.3 via xe-0/0/2.0
+                   #[Direct/0] 00:06:02, metric 1
+                    >  to 10.1.2.3 via xe-0/0/2.0
+169.254.0.0/24     *[Direct/0] 04:48:18
+                    >  via em1.0
+169.254.0.2/32     *[Local/0] 04:48:18
+                       Local via em1.0
+224.0.0.5/32       *[OSPF/10] 04:48:23, metric 1
+                       MultiRecv
+
+inet6.0: 5 destinations, 5 routes (5 active, 0 holddown, 0 hidden)
++ = Active Route, - = Last Active, * = Both
+
+fe80::205:860f:fc71:8100/128
+                   *[Direct/0] 04:48:18
+                    >  via lo0.0
+fe80::205:86ff:fe71:8103/128
+                   *[Local/0] 01:12:52
+                       Local via xe-0/0/0.0
+fe80::205:86ff:fe71:8107/128
+                   *[Local/0] 01:12:25
+                       Local via xe-0/0/1.0
+fe80::205:86ff:fe71:810b/128
+                   *[Local/0] 01:12:25
+                       Local via xe-0/0/2.0
+ff02::2/128        *[INET6/0] 04:48:22
+                       MultiRecv
+```
+
+И связанность со всеми коммутаторами фабрики:
+```
+root@swSpine01> ping count 2 10.1.0.2
+PING 10.1.0.2 (10.1.0.2): 56 data bytes
+64 bytes from 10.1.0.2: icmp_seq=0 ttl=63 time=341.089 ms
+64 bytes from 10.1.0.2: icmp_seq=1 ttl=63 time=382.863 ms
+
+--- 10.1.0.2 ping statistics ---
+2 packets transmitted, 2 packets received, 0% packet loss
+round-trip min/avg/max/stddev = 341.089/361.976/382.863/20.887 ms
+
+{master:0}
+root@swSpine01> ping count 2 10.1.2.1
+PING 10.1.2.1 (10.1.2.1): 56 data bytes
+64 bytes from 10.1.2.1: icmp_seq=0 ttl=64 time=294.359 ms
+64 bytes from 10.1.2.1: icmp_seq=1 ttl=64 time=212.573 ms
+
+--- 10.1.2.1 ping statistics ---
+2 packets transmitted, 2 packets received, 0% packet loss
+round-trip min/avg/max/stddev = 212.573/253.466/294.359/40.893 ms
+
+{master:0}
+root@swSpine01> ping count 2 10.1.2.2
+PING 10.1.2.2 (10.1.2.2): 56 data bytes
+64 bytes from 10.1.2.2: icmp_seq=0 ttl=64 time=186.610 ms
+64 bytes from 10.1.2.2: icmp_seq=1 ttl=64 time=336.032 ms
+
+--- 10.1.2.2 ping statistics ---
+2 packets transmitted, 2 packets received, 0% packet loss
+round-trip min/avg/max/stddev = 186.610/261.321/336.032/74.711 ms
+
+{master:0}
+root@swSpine01> ping count 2 10.1.2.3
+PING 10.1.2.3 (10.1.2.3): 56 data bytes
+64 bytes from 10.1.2.3: icmp_seq=0 ttl=64 time=662.174 ms
+64 bytes from 10.1.2.3: icmp_seq=1 ttl=64 time=375.978 ms
+
+--- 10.1.2.3 ping statistics ---
+2 packets transmitted, 2 packets received, 0% packet loss
+round-trip min/avg/max/stddev = 375.978/519.076/662.174/143.098 ms
+
+{master:0}
+```
+
+Дополнительно просмотрим информацию о работе BFD:
+```
+root@swSpine01> show bfd session
+                                                  Detect   Transmit
+Address                  State     Interface      Time     Interval  Multiplier
+10.1.2.1                 Up        xe-0/0/0.0     6.000     2.000        3
+10.1.2.2                 Up        xe-0/0/1.0     0.300     0.100        3
+10.1.2.3                 Up        xe-0/0/2.0     0.300     0.100        3
+
+3 sessions, 3 clients
+Cumulative transmit rate 20.5 pps, cumulative receive rate 20.5 pps
+```
+
+На этом Underlay можно считать настроенным.
+
+### Замечение относительно MTU
+Перед тем, как перейти к настройке оверлея, необходимо уделить особое внимание параметрам MTU, используемым на интерфейсах граней фабрики.
+
+Инкапсуляция VXLAN добавляет к каждому пакету ровно 50 байт оверхеда (заголовки сокетов UDP, VXLAN и внешний IP-заголовок). Если клиент внутри сети отправит стандартный пакет размером 1500 байт, Leaf-коммутатор упакует его в VXLAN, и на Spine полетит кадр размером уже 1550 байт и, по-умолчанию, будет отфильтрован.
+
+Однако, промышленным стандартом, используемым в дата-центрах являются большие пакеты - «Jumbo Frames», 
+позволяющие существенно экономить полосу пропускания.
+
+Рекомендуемой настройкой интерфейса, в общем случае, является следующий:
+```
 set interfaces xe-0/0/0 mtu 9216
 set interfaces xe-0/0/0 unit 0 family inet mtu 9000
-
-mtu 9216 (на физическом интерфейсе): Гарантирует, что любые VXLAN-пакеты (1550 байт, 1600 байт или даже Jumbo-кадры от клиентов) пролетят между Leaf и Spine без ограничений.
-family inet mtu 9000 (на логическом): Защитит стек самого Junos. Теперь lo0.0 при генерации SSH или OSPF будет нарезать пакеты по 9000 байт. А так как физический порт готов принимать до 9216 байт, пакеты проскочат мгновенно (при условии, что вы подняли MTU в самом EVE-NG, как мы обсуждали в предыдущем шаге).
-
-
-Жёсткие 16384 байт вшиты в ядро системы
-
-
-
-EVE-NG:
-cp /opt/unetlab/html/includes/config.php.distribution /opt/unetlab/html/includes/config.php
-
-
-<?php
-// TEMPLATE MODE .missing or .hided
-DEFINE('TEMPLATE_DISABLED','.hided') ;
-$TEMPLATE_MTU = 9216;
-?>
-
-
+set interfaces xe-0/0/0 unit 0 family inet6 mtu 1470
 ```
-root@swSpine01> show interfaces lo0
-Physical interface: lo0, Enabled, Physical link is Up
-  Interface index: 6, SNMP ifIndex: 6
-  Description: --- Virtual (no VRF, no VLAN): Underlay Control Plane
-  Type: Loopback, MTU: Unlimited
-  Device flags   : Present Running Loopback
-  Interface flags: SNMP-Traps
-  Link flags     : None
-  Last flapped   : Never
-    Input packets : 43741
-    Output packets: 43741
 
-  Logical interface lo0.0 (Index 548) (SNMP ifIndex 16)
-    Flags: SNMP-Traps Encapsulation: Unspecified
-    Input packets : 26
-    Output packets: 26
-    Protocol inet, MTU: Unlimited
-    Max nh cache: 0, New hold nh limit: 0, Curr nh cnt: 0, Curr new hold cnt: 0,
-    NH drop cnt: 0
-      Flags: Sendbcast-pkt-to-re
-      Addresses, Flags: Is-Default Is-Primary
-        Local: 10.1.0.1
-    Protocol inet6, MTU: Unlimited
-    Max nh cache: 0, New hold nh limit: 0, Curr nh cnt: 0, Curr new hold cnt: 0,
-    NH drop cnt: 0
-      Flags: None
-        Local: fe80::205:860f:fc71:c500
-...
-```
-Вывод Protocol inet, MTU: Unlimited наглядно показывает корень проблемы: в вашей версии Junos для виртуального интерфейса lo0.0 значение MTU определено как Unlimited (Без ограничений).
+где:
+- **set interfaces xe-0/0/0 mtu 9216** — это L2 MTU (Media MTU). Он определяет максимальный размер всего Ethernet-кадра, включая заголовки L2, который физический порт способен отправить или принять.
+- **set interfaces xe-0/0/0 unit 0 family inet mtu 9000** — это L3 MTU (Protocol MTU). Он определяет максимальный размер IPv4-пакета (полезной нагрузки внутри Ethernet-кадра).
+- **set interfaces xe-0/0/0 unit 0 family inet6 mtu 1472** - L3 MTU для In-Band операций. У меня не получилось достичь полной работоспособности фабрике с большими пакетами, поэтому я оставил самую самую большую длину пакетов, которая у меня протискивалась между виртуальными коммутаторами.
 
-Когда вы запускаете SSH-сессию, использующую unnumbered-адрес этого интерфейса, Junos пытается отправить огромный пакет, который физически не может быть фрагментирован или передан через виртуальные линки EVE-NG.
+> IPv6 стек у меня не используется для построения Underlay и не влият на процессы передачи клиентского трафика в лабораторной среде.
 
-Поскольку изменить MTU для lo0 или заставить его фрагментировать пакеты стандартными методами в Junos невозможно, единственный способ наладить BGP и SSH в такой схеме — отказаться от unnumbered-address на интерфейсах Underlay-сети (стыках Leaf-Spine).
-
-
-
-Вариант 2. TCP MSS Clamping для BGP и системного трафика
-Документация Juniper предлагает использовать механизм TCP MSS для контроля размера пакетов управляющих протоколов, если под ними лежит Jumbo-линк.
-Поскольку вы будете настраивать BGP, чтобы его сессии (и SSH) не падали из-за фрагментации, добавьте в конфигурацию BGP:
-set protocols bgp group <имя_группы> tcp-mss 1024
-
-
-run ping 10.1.2.1 size 8500 do-not-fragment source 10.1.0.1
-
-
-
+Гипервизор ESXi получил следующие настройки:
+```ssh
 [root@hstLAB01:~] esxcli network vswitch standard set -m 9000 -v vSwitch0
 [root@hstLAB01:~] esxcli network ip interface set -m 9000 -i vmk0
+```
 
+На стороне EVE-NG были сделаны следующие настройки:
+```
+cp /opt/unetlab/html/includes/config.php.distribution /opt/unetlab/html/includes/config.php
+```
+
+и конфигурационный файл была добавлена строка
+```php
+$TEMPLATE_MTU = 9216;
+```
+
+После чего расширены все линки:
+```
+root@vmEVE-NG:~# for i in $(ls /sys/class/net/); do ip link set dev $i mtu 9000 2>/dev/null; done
+```
+
+Что обеспечило связанность между EVE-NG и ESXi:
+```
 root@vmEVE-NG:~# ping -M do -s 8972 10.1.10.11
 PING 10.1.10.11 (10.1.10.11) 8972(9000) bytes of data.
 8980 bytes from 10.1.10.11: icmp_seq=1 ttl=64 time=0.193 ms
@@ -692,117 +860,6 @@ PING 10.1.10.11 (10.1.10.11) 8972(9000) bytes of data.
 --- 10.1.10.11 ping statistics ---
 3 packets transmitted, 3 received, 0% packet loss, time 2056ms
 rtt min/avg/max/mdev = 0.133/0.182/0.222/0.037 ms
-
-root@vmEVE-NG:~# for i in $(ls /sys/class/net/); do ip link set dev $i mtu 9000 2>/dev/null; done
-
-
-
-
-Чтобы эта проблема не повторялась при следующих перезагрузках лабы, вам нужно жестко зафиксировать роль Master (коммутатор №0) в файле конфигурации. Тогда при загрузке Junos будет игнорировать любые внешние попытки переключить его роль
-
-
-set virtual-chassis member 0 mastership-priority 255
-
-
-
-
-Переходим на сторону swLeaf01:
-```
-root@vqfx-re:RE:0% cli
-{master:0}
-
-root@vqfx-re> configure
-Entering configuration mode
-
-{master:0}[edit]
-
-root@vqfx-re# set system root-authentication plain-text-password
-New password:
-Retype new password:
-
-{master:0}[edit]
-
-root@vqfx-re# wildcard delete interfaces .*
-  matched: et-0/0/0
-  matched: xe-0/0/0
-  matched: xe-0/0/0:0
-  matched: xe-0/0/0:1
-  matched: xe-0/0/0:2
-  matched: xe-0/0/0:3
-  matched: et-0/0/1
-  matched: xe-0/0/1
-  ...
-Delete 410 objects? [yes,no] (no) yes
-
-{master:0}[edit]
-
-root@vqfx-re# commit
-configuration check succeeds
-Generating DSA key /etc/ssh/ssh_host_dsa_key
-Generating public/private dsa key pair.
-Your identification has been saved in /config/ssh_host_dsa_key.
-Your public key has been saved in /config/ssh_host_dsa_key.pub.
-The key fingerprint is:
-SHA256:cvsfYNFcloBpbg9aNCnONOSgPfKsZW8Z+ATqBM8K930 root@vqfx-re
-The key's randomart image is:
-+---[DSA 1024]----+
-|      ...  +..o. |
-|     o o+ Bo o.  |
-|  . o ++.*..o    |
-|   + = +o =.     |
-|. . = B S+oo     |
-| o = = *.= ..    |
-|  . + . E   .    |
-|       o .   .   |
-|          ...    |
-+----[SHA256]-----+
-commit complete
-
-vqfx-re (ttyd0)
-
-login:
-...
-
-Авторизуемся с новыми учетными данными и настраиваем:
-```
-set system host-name swLeaf01
-set system domain-name Underlay.local
-
-set interfaces lo0 description "--- Virtual (no VRF, no VLAN): Underlay Control Plane"
-set interfaces lo0.0 family inet address 10.1.2.1/32
-
-set interfaces xe-0/0/0 description "--- L3 (no VRF, no VLAN): p2p connection to swSpine01/Et1"
-set interfaces xe-0/0/0 mtu 9214
-set interfaces xe-0/0/0 unit 0 family inet unnumbered-address lo0.0
-
-set interfaces xe-0/0/1 description "--- L3 (no VRF, no VLAN): p2p connection to swSpine02/Et1"
-set interfaces xe-0/0/1 mtu 9214
-set interfaces xe-0/0/1 unit 0 family inet unnumbered-address lo0.0
 ```
 
-
-
-
-
-Чтобы коммутатор пересчитывал скорость интерфейсов для системных счетчиков и SNMP каждые 60 секунд, выполните:junosset system snmp-interface-calculate-rate 60
-
-
-
-
-
-```
-window@swSpine01> show bfd session
-                                                  Detect   Transmit
-Address                  State     Interface      Time     Interval  Multiplier
-10.1.2.1                 Up        xe-0/0/0.0     6.000     2.000        3
-10.1.2.2                 Up        xe-0/0/1.0     0.300     0.100        3
-10.1.2.3                 Up        xe-0/0/2.0     0.300     0.100        3
-
-3 sessions, 3 clients
-Cumulative transmit rate 20.5 pps, cumulative receive rate 20.5 pps
-
-{master:0}
-```
-
-```
-```
+Но это так и не привело к полноценной работе эмулятора.
