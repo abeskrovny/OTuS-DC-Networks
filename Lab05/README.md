@@ -1034,19 +1034,13 @@ set switch-options vtep-source-interface lo0.0
 
 | **Характеристика** | **VLAN-Based** | **VLAN Bundle** | **VLAN-Aware Bundle** |
 |--------------------|-----------------------|-----------------------|-----------------------|
-| Новый синтаксис: `mac-vrf`| `service-type vlan-based` | `service-type vlan-bundle` | `service-type vlan-aware` |
-| Старый синтаксис | evpn | evpn | virtual-switch |
+| **Новый синтаксис**: `mac-vrf`| `service-type vlan-based` | `service-type vlan-bundle` | `service-type vlan-aware` |
+| **Старый синтаксис**: `<>` | evpn | evpn | virtual-switch |
+| Таблицы MAC | Изолированные (1 на VLAN) | Одна общая на весь инстанс |  весь инстансИзолированные (1 на bridge-domain) |
+| **Масштабируемость** | Низкая (много инстансов) | Высокая | Высокая (рекомендуется) |
+| **Поддержка L3 (IRB)** | Да | Нет | Да |
 
-
-
-
-
-
-
-
-
-
-В свете этого определим по паре VLAN'ов для каждой из них:
+Предварительно, настроим пул VLAN:
 ```
 ! VLAN используемые в модели VLAN-Based
 set vlans VLANBASED01 vlan-id 11
