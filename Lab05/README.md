@@ -1241,6 +1241,7 @@ eviVLANAWARE.evpn.0: 8 destinations, 14 routes (8 active, 0 holddown, 0 hidden)
 *                         10.1.2.1                     100        I
   3:10.1.2.1:10::10012::10.1.2.1/248 IM
 *                         10.1.2.1                     100        I
+```
 
 Как видно, мы получили всю необходиму информацию о хосте за первым Leaf'ом. Настроим остальные коммутаторы и хосты соответствующим образом. И получим полную базу EVPN:
 ```
@@ -1402,36 +1403,89 @@ set interfaces ae0 aggregated-ether-options lacp system-id 00:11:22:33:44:55
 > По стандарту LACP, сервер строит агрегированный канал (Port-Channel / Bond) только в том случае, если от всех сетевых карт ему прилетают LACP-кадры с абсолютно одинаковым MAC-адресом коммутатора (System ID).
 
 Зададим уникальный идентификатор ESI (Ethernet Segment Identifier) - это уникальный 10-байтный ID на всей EVPN-фабрике. Когда swLeaf01 и swLeaf02 видят, что у них на портах ae0 прописан один и тот же ESI, они генерируют специальный системный маршрут EVPN Type 4 (Ethernet Segment route) и отправляют его на Spine.
-
+```
 set interfaces ae0 esi 00:10:01:02:02:00:00:00:00:02
-set interfaces ae0 esi all-active
+set interfaces ae0 esi all-active       ! Переводить все интерфейсы агререгата в состояние Active 
+```
 
-
-
-# 4. Переводим ae0 в режим L2-транка и прописываем вланы
+Фактически, агрегат подготовлен. Осталось перенести на него настройки транка:
+```
 set interfaces ae0 unit 0 family ethernet-switching interface-mode trunk
-set interfaces ae0 unit 0 family ethernet-switching vlan members [ 11 12 ]
+set interfaces ae0 unit 0 family ethernet-switching vlan members 11-12
+```
 
-# 5. Привязываем интерфейс ae0 к нашему инстансу вместо одиночного xe-0/0/2
-delete routing-instances EVPN-VLAN-AWARE interface xe-0/0/2.0
-set routing-instances EVPN-VLAN-AWARE interface ae0.0
+Далее, необходимо привязать настроенный пользовательский интерфейс к экземпляру маршрутизиции EVPN:
+```
+set routing-instances eviVLANAWARE interface ae0.0
+```
 
----
+После коммита произведем дефектовку выполненных действий. Если запросить состояние агрегата (`show lacp interfaces`), мы получим пустой вывод несмотря на то, что при коммите ошибок не было обнаружено.
 
+При этом пустой вывод означает, что LACP на коммутаторе вообще не запущен. Физический порт xe-0/0/2.0 привязан к ae0.0, но сам процесс LACP не обменивается кадрами. В Juniper JunOS агрегированный интерфейс (aeX) не начнет работать по протоколу LACP, пока явно не установлено ему количество поддерживаемых физических портов в агрегате (device-count). Без этой глобальной команды конфигурация LACP внутри интерфейса ae0 просто игнорируется ядром.
 
-Пустой вывод означает, что LACP на коммутаторе вообще не запущен. Физический порт xe-0/0/2.0 привязан к ae0.0, но сам процесс LACP не обменивается кадрами.В Juniper JunOS агрегированный интерфейс (aeX) не начнет работать по протоколу LACP, пока ты явно не укажешь ему количество поддерживаемых физических портов в системе (device-count). Без этой глобальной команды конфигурация LACP внутри интерфейса ae0 просто игнорируется ядром.
-
+Произведем ее настройку:
+```
 root@swLeaf02# set chassis aggregated-devices ethernet device-count 10
+```
 
-
-oot@swLeaf02> show lacp interfaces
+После этого, состояние агрегата изменится:
+```
+root@swLeaf02> show lacp interfaces
 Aggregated interface: ae0
     LACP state:       Role   Exp   Def  Dist  Col  Syn  Aggr  Timeout  Activity
       xe-0/0/2       Actor    No    No    No   No   No   Yes     Fast    Active
       xe-0/0/2     Partner   Yes    No    No   No   No   Yes     Fast    Active
     LACP protocol:        Receive State  Transmit State          Mux State
       xe-0/0/2                  Current   Fast periodic            Waiting
+```
 
+Этот вывод означает, что LACP-сессия зависла на этапе согласования (в режиме ожидания), и трафик через этот канал сейчас НЕ ходит. Физически порт xe-0/0/2 активен, но коммутатор и роутер (`Server01`) не могут договориться между собой - он просто не настроен.
+
+Перенастроим роутер `Server01` следующим образом:
+```
+hostname Server01
+!
+ip domain name local
+!
+interface Port-channel1
+ description --- Trunk (VLAN100): Connection to ESI:
+ no ip address
+ load-interval 60
+ no negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface Port-channel1.11
+ description --- Virtual (VLAN011): VLANAWARE01
+ encapsulation dot1Q 11
+ ip address 192.168.11.11 255.255.255.0
+!
+interface Port-channel1.12
+ description --- Virtual (VLAN012): VLANAWARE02
+ encapsulation dot1Q 12
+ ip address 192.168.12.11 255.255.255.0
+!
+interface GigabitEthernet1
+ description --- Port-channel 1 (LACP): Connection to ESI
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet2
+ description --- Port-channel 1 (LACP): Connection to ESI
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+```
+
+После настройки проверим базу EVPN:
+```
 root@swLeaf02> show evpn database
 Instance: eviVLANAWARE
 VLAN  DomainId  MAC address        Active source                  Timestamp        IP address
@@ -1443,7 +1497,10 @@ VLAN  DomainId  MAC address        Active source                  Timestamp     
      10012      50:00:00:05:00:00  xe-0/0/3.0                     Sep 13 09:55:09
      10012      50:00:00:0c:00:00  10.1.2.3                       Sep 13 10:04:40
      10012      50:00:00:0f:00:00  10.1.2.1                       Sep 13 10:27:30
+```
 
+Теперь можно проверить связанность семжу хостами:
+```
 Server01#ping 192.168.11.2
 Type escape sequence to abort.
 Sending 5, 100-byte ICMP Echos to 192.168.11.2, timeout is 2 seconds:
@@ -1454,9 +1511,10 @@ Type escape sequence to abort.
 Sending 5, 100-byte ICMP Echos to 192.168.11.3, timeout is 2 seconds:
 .!!!!
 Success rate is 80 percent (4/5), round-trip min/avg/max = 357/552/662 ms
+```
 
 Перейдем на swLeaf01 и произведем аналогичные действия:
-
+```
 root@swLeaf01> show evpn database
 Instance: eviVLANAWARE
 VLAN  DomainId  MAC address        Active source                  Timestamp        IP address
@@ -1466,9 +1524,11 @@ VLAN  DomainId  MAC address        Active source                  Timestamp     
      10012      00:1e:49:49:74:c0  00:10:01:02:02:00:00:00:00:02  Sep 13 12:16:01
      10012      50:00:00:05:00:00  10.1.2.2                       Sep 13 09:55:11
      10012      50:00:00:0c:00:00  10.1.2.3                       Sep 13 10:04:40
+```
 
-ну и после пинга:
+и после пинга:
 
+```
 root@swLeaf01> show evpn database
 Instance: eviVLANAWARE
 VLAN  DomainId  MAC address        Active source                  Timestamp        IP address
@@ -1478,7 +1538,10 @@ VLAN  DomainId  MAC address        Active source                  Timestamp     
      10012      00:1e:49:49:74:c0  00:10:01:02:02:00:00:00:00:02  Sep 13 12:29:33  192.168.12.11
      10012      50:00:00:05:00:00  10.1.2.2                       Sep 13 12:29:31  192.168.12.2
      10012      50:00:00:0c:00:00  10.1.2.3                       Sep 13 12:29:36  192.168.12.3
+```
 
+Таблица CAM на коммутаторе будет иметь следующий вид:
+```
 root@swLeaf01> show ethernet-switching table
 
 MAC flags (S - static MAC, D - dynamic MAC, L - locally learned, P - Persistent static
@@ -1495,7 +1558,10 @@ Routing instance : eviVLANAWARE
    VLANAWARE02         00:1e:49:49:74:c0   DLR      ae0.0
    VLANAWARE02         50:00:00:05:00:00   D        vtep.32769                          10.1.2.2
    VLANAWARE02         50:00:00:0c:00:00   D        vtep.32770                          10.1.2.3
+```
 
+Осталось только посмотреть наличие маршрутов EVPN 4 типа (Ethernet Segment Route), и это прямое доказательство того, что на уровне BGP-сигнализации мультихоминг полностью собрался и работает:
+```
 root@swLeaf01> show route table bgp.evpn.0 match-prefix 4:*
 
 bgp.evpn.0: 23 destinations, 39 routes (23 active, 0 holddown, 0 hidden)
@@ -1513,6 +1579,8 @@ bgp.evpn.0: 23 destinations, 39 routes (23 active, 0 holddown, 0 hidden)
                       AS path: I, validation-state: unverified
                     >  to 10.1.0.1 via xe-0/0/0.0
                        to 10.1.0.2 via xe-0/0/1.0
+```
+
 
 ---
 
