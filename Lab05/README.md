@@ -997,11 +997,6 @@ Peer                     AS      InPkt     OutPkt    OutQ   Flaps Last Up/Dwn St
 10.1.2.3              65000          0          0       0       0       19:05 Active
 ```
 
-Из глобальных параметров осталось настроить лишь источник VTEP-туннелей:
-```
-set switch-options vtep-source-interface lo0.0
-```
-
 #### Сторона Leaf: настройка L2VPN-сервисов
 Процесс конфигурирования намеренно разделен на два этапа, поскольку именно на текущем шаге реализуется ключевая логика взаимодействия плоскости управления MP-BGP EVPN (Control Plane) и плоскости передачи данных VxLAN (Data Plane).
 
@@ -1040,6 +1035,466 @@ set switch-options vtep-source-interface lo0.0
 | **Масштабируемость** | Низкая (много инстансов) | Высокая | Высокая (рекомендуется) |
 | **Поддержка L3 (IRB)** | Да | Нет | Да |
 
+##### Модель: VLAN-Aware Bundle (VLAN 31 и VLAN 32)
+Начнем с модели VLAN-Aware, так как она является рекомендуемой. Учитывая желание сконфигурировать разные модели сервисов, дальнейшие действия я буду проводить в отдельном экземпляре:
+```
+set routing-instances eviVLANAWARE instance-type virtual-switch
+
+set routing-instances eviVLANAWARE interface xe-0/0/2.0                ! Привязывем все связанные клиентские порты к экземпляру
+
+set routing-instances eviVLANAWARE route-distinguisher 10.1.2.1:10
+set routing-instances eviVLANAWARE vrf-target target:65000:10010
+
+set routing-instances eviVLANAWARE vtep-source-interface lo0.0
+set routing-instances eviVLANAWARE protocols evpn encapsulation vxlan
+set routing-instances eviVLANAWARE protocols evpn extended-vni-list all
+
+set routing-instances eviVLANAWARE vlans VLANAWARE01 vlan-id 11
+set routing-instances eviVLANAWARE vlans VLANAWARE01 vxlan vni 10011
+set routing-instances eviVLANAWARE vlans VLANAWARE02 vlan-id 12
+set routing-instances eviVLANAWARE vlans VLANAWARE02 vxlan vni 10012
+```
+
+Эти VLAN будут находиться в таблице соответствующего виртуального коммутатора (`eviVLANAWARE`), что мы увидить немного ниже. 
+
+Конфигурируем интерфейс подключения из учета единственного линка (Gi1 <-> XE-0/0/2):
+```
+set interfaces xe-0/0/2 unit 0 family ethernet-switching interface-mode trunk
+set interfaces xe-0/0/2 unit 0 family ethernet-switching vlan members 11-12
+```
+
+> Следует отметить, что режим виртуального коммутатора `unit 0 family ethernet-switching` поддерживается только в юните `unit 0`.
+
+Проверим ARP-таблицы:
+```
+root@swLeaf01> show vlans
+
+Routing instance        VLAN name             Tag          Interfaces
+default-switch          MGMT                  100
+
+eviVLANAWARE            VLANAWARE01           11
+                                                           vtep.32769*
+                                                           vtep.32770*
+                                                           xe-0/0/2.0*
+eviVLANAWARE            VLANAWARE02           12
+                                                           vtep.32769*
+                                                           vtep.32770*
+                                                           xe-0/0/2.0*
+```
+
+Благодаря этому выоду видно, что мы при конфигурировании экземпляра маршрутизации (`eviVLANAWARE`) косвенно создали и соответствующие VLAN'ы. Созданный ранее VLAN 100 находится в виртуальном коммутаторе `default-switch` и даже в определении не пересекается с VLAN'ами других виртуальных коммутаторов.
+
+Если сейчас проверить базу EVPN (`show evpn database`) - она будет пустой, но работоспособность экземпляра маршрутизации мы сможем увидеть по контекстной подсказке:
+```
+root@swLeaf01> show route table ?
+Possible completions:
+  <table>              Name of routing table
+  :vxlan.inet.0
+  bgp.evpn.0
+  eviVLANAWARE.evpn.0
+  inet.0
+  inet6.0
+```
+
+Это дает нам возможность даже увидеть состояние таблицы экземпляра:
+```
+root@swLeaf01> show route table bgp.evpn.0
+
+bgp.evpn.0: 2 destinations, 2 routes (2 active, 0 holddown, 0 hidden)
++ = Active Route, - = Last Active, * = Both
+
+3:10.1.2.1:10::10011::10.1.2.1/248 IM
+                   *[EVPN/170] 00:01:13
+                       Indirect
+3:10.1.2.1:10::10012::10.1.2.1/248 IM
+                   *[EVPN/170] 00:01:13
+                       Indirect
+```
+
+и даже посмотреть, что коммутатор swLeaf01 анонсирует, например, в сторону коммутатора swSpine01:
+```
+root@swLeaf01> show route advertising-protocol bgp 10.1.0.1
+
+bgp.evpn.0: 2 destinations, 2 routes (2 active, 0 holddown, 0 hidden)
+  Prefix		  Nexthop	       MED     Lclpref    AS path
+  3:10.1.2.1:10::10011::10.1.2.1/248 IM
+*                         Self                         100        I
+  3:10.1.2.1:10::10012::10.1.2.1/248 IM
+*                         Self                         100        I
+
+eviVLANAWARE.evpn.0: 2 destinations, 2 routes (2 active, 0 holddown, 0 hidden)
+  Prefix		  Nexthop	       MED     Lclpref    AS path
+  3:10.1.2.1:10::10011::10.1.2.1/248 IM
+*                         Self                         100        I
+  3:10.1.2.1:10::10012::10.1.2.1/248 IM
+*                         Self                         100        I
+```
+
+Сейчас это маршруты EVPN типа 3, (Type 3 Route), которые называются IMET (Inclusive Multicast Ethernet Tag). Упрощенно - это автоматические строители VxLAN-туннелей (VTEP-to-VTEP).
+
+У нас в качестве сервера выступает Cisco IOS роутер. Сконфигурируем его следующим образом:
+```
+hostname Server01
+!
+ip domain name local
+!
+interface GigabitEthernet1
+ description --- Trunk (VLAN100): Connection to swLeaf01:XE-0/0/2
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet1.11
+ description --- Virtual (VLAN011): VLANAWARE01
+ encapsulation dot1Q 11
+ ip address 192.168.11.1 255.255.255.0
+!
+interface GigabitEthernet1.12
+ description --- Virtual (VLAN012): VLANAWARE02
+ encapsulation dot1Q 12
+ ip address 192.168.12.1 255.255.255.0
+```
+
+Как только мы настроили его и подняли интерфейс `Gi1` (при этом даже не пинговали), подсистема EVPN изучит MAC-адреса клиентов (если они не Silent):
+```
+root@swLeaf01> show evpn database
+Instance: eviVLANAWARE
+VLAN  DomainId  MAC address        Active source                  Timestamp        IP address
+     10011      50:00:00:0f:00:00  xe-0/0/2.0                     Sep 13 09:25:08  192.168.11.1
+     10012      50:00:00:0f:00:00  xe-0/0/2.0                     Sep 13 09:25:16  192.168.12.1
+```
+
+внесет в таблицу экземпляра в виде маршрутов типа 2. Маршрут EVPN Типа 2 (Type 2 Route) называется MAC/IP Advertisement Route. Если маршруты 3-го типа (IMET) строят сами туннели между свитчами, то маршрут 2-го типа наполняет их смыслом — он анонсирует в BGP конкретные MAC-адреса хостов:
+```
+root@swLeaf01> show route table bgp.evpn.0
+
+bgp.evpn.0: 6 destinations, 6 routes (6 active, 0 holddown, 0 hidden)
++ = Active Route, - = Last Active, * = Both
+
+2:10.1.2.1:10::10011::50:00:00:0f:00:00/304 MAC/IP
+                   *[EVPN/170] 00:01:38
+                       Indirect
+2:10.1.2.1:10::10012::50:00:00:0f:00:00/304 MAC/IP
+                   *[EVPN/170] 00:01:29
+                       Indirect
+2:10.1.2.1:10::10011::50:00:00:0f:00:00::192.168.11.1/304 MAC/IP
+                   *[EVPN/170] 00:01:37
+                       Indirect
+2:10.1.2.1:10::10012::50:00:00:0f:00:00::192.168.12.1/304 MAC/IP
+                   *[EVPN/170] 00:01:29
+                       Indirect
+3:10.1.2.1:10::10011::10.1.2.1/248 IM
+                   *[EVPN/170] 00:18:51
+                       Indirect
+3:10.1.2.1:10::10012::10.1.2.1/248 IM
+                   *[EVPN/170] 00:18:51
+                       Indirect
+```
+
+Теперь увидеть изученные MAC-адреса мы сможем и из базы EVPN:
+```
+root@swLeaf02> show evpn database
+Instance: eviVLANAWARE
+VLAN  DomainId  MAC address        Active source                  Timestamp        IP address
+     10011      50:00:00:0f:00:00  10.1.2.1                       Sep 13 09:37:52  192.168.11.1
+     10012      50:00:00:0f:00:00  10.1.2.1                       Sep 13 09:37:52  192.168.12.1
+```
+
+Посмотрим со стороны другого Leaf'а, что приходит ему от Spine'а:
+```
+root@swLeaf02> show route receive-protocol bgp 10.1.0.1
+
+inet.0: 8 destinations, 10 routes (8 active, 0 holddown, 0 hidden)
+
+:vxlan.inet.0: 4 destinations, 4 routes (4 active, 0 holddown, 0 hidden)
+
+inet6.0: 4 destinations, 4 routes (4 active, 0 holddown, 0 hidden)
+
+bgp.evpn.0: 8 destinations, 14 routes (8 active, 0 holddown, 0 hidden)
+  Prefix		  Nexthop	       MED     Lclpref    AS path
+  2:10.1.2.1:10::10011::50:00:00:0f:00:00/304 MAC/IP
+*                         10.1.2.1                     100        I
+  2:10.1.2.1:10::10012::50:00:00:0f:00:00/304 MAC/IP
+*                         10.1.2.1                     100        I
+  2:10.1.2.1:10::10011::50:00:00:0f:00:00::192.168.11.1/304 MAC/IP
+*                         10.1.2.1                     100        I
+  2:10.1.2.1:10::10012::50:00:00:0f:00:00::192.168.12.1/304 MAC/IP
+*                         10.1.2.1                     100        I
+  3:10.1.2.1:10::10011::10.1.2.1/248 IM
+*                         10.1.2.1                     100        I
+  3:10.1.2.1:10::10012::10.1.2.1/248 IM
+*                         10.1.2.1                     100        I
+
+eviVLANAWARE.evpn.0: 8 destinations, 14 routes (8 active, 0 holddown, 0 hidden)
+  Prefix                  Nexthop              MED     Lclpref    AS path
+  2:10.1.2.1:10::10011::50:00:00:0f:00:00/304 MAC/IP
+*                         10.1.2.1                     100        I
+  2:10.1.2.1:10::10012::50:00:00:0f:00:00/304 MAC/IP
+*                         10.1.2.1                     100        I
+  2:10.1.2.1:10::10011::50:00:00:0f:00:00::192.168.11.1/304 MAC/IP
+*                         10.1.2.1                     100        I
+  2:10.1.2.1:10::10012::50:00:00:0f:00:00::192.168.12.1/304 MAC/IP
+*                         10.1.2.1                     100        I
+  3:10.1.2.1:10::10011::10.1.2.1/248 IM
+*                         10.1.2.1                     100        I
+  3:10.1.2.1:10::10012::10.1.2.1/248 IM
+*                         10.1.2.1                     100        I
+
+Как видно, мы получили всю необходиму информацию о хосте за первым Leaf'ом. Настроим остальные коммутаторы и хосты соответствующим образом. И получим полную базу EVPN:
+```
+root@swLeaf01> show evpn database
+Instance: eviVLANAWARE
+VLAN  DomainId  MAC address        Active source                  Timestamp        IP address
+     10011      50:00:00:05:00:00  10.1.2.2                       Sep 13 09:54:53
+     10011      50:00:00:0c:00:00  10.1.2.3                       Sep 13 10:04:39
+     10011      50:00:00:0f:00:00  xe-0/0/2.0                     Sep 13 10:27:41
+     10012      50:00:00:05:00:00  10.1.2.2                       Sep 13 09:55:11
+     10012      50:00:00:0c:00:00  10.1.2.3                       Sep 13 10:04:40
+     10012      50:00:00:0f:00:00  xe-0/0/2.0                     Sep 13 10:27:29
+```
+
+Проверим доступность любого из "удаленных" хостов:
+```
+Server01>ping 192.168.11.2
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.2, timeout is 2 seconds:
+..!!!
+Success rate is 60 percent (3/5), round-trip min/avg/max = 369/393/428 ms
+```
+
+Как видно, мы потеряли на 1 пакет больше, чем в широковещательной среде.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+root@swLeaf01> show route table eviVLANAWARE.evpn.0
+
+eviVLANAWARE.evpn.0: 12 destinations, 20 routes (12 active, 0 holddown, 0 hidden)
++ = Active Route, - = Last Active, * = Both
+
+2:10.1.2.1:10::10011::50:00:00:0f:00:00/304 MAC/IP
+                   *[EVPN/170] 00:38:17
+                       Indirect
+2:10.1.2.1:10::10012::50:00:00:0f:00:00/304 MAC/IP
+                   *[EVPN/170] 00:38:29
+                       Indirect
+2:10.1.2.2:10::10011::50:00:00:05:00:00/304 MAC/IP
+                   *[BGP/170] 01:11:04, localpref 100, from 10.1.0.1
+                      AS path: I, validation-state: unverified
+                       to 10.1.0.1 via xe-0/0/0.0
+                    >  to 10.1.0.2 via xe-0/0/1.0
+                    [BGP/170] 01:11:03, localpref 100
+                      AS path: I, validation-state: unverified
+                       to 10.1.0.1 via xe-0/0/0.0
+                    >  to 10.1.0.2 via xe-0/0/1.0
+2:10.1.2.2:10::10012::50:00:00:05:00:00/304 MAC/IP
+                   *[BGP/170] 01:10:46, localpref 100, from 10.1.0.1
+                      AS path: I, validation-state: unverified
+                       to 10.1.0.1 via xe-0/0/0.0
+                    >  to 10.1.0.2 via xe-0/0/1.0
+                    [BGP/170] 01:10:46, localpref 100
+                      AS path: I, validation-state: unverified
+                       to 10.1.0.1 via xe-0/0/0.0
+                    >  to 10.1.0.2 via xe-0/0/1.0
+2:10.1.2.3:10::10011::50:00:00:0c:00:00/304 MAC/IP
+                   *[BGP/170] 01:01:18, localpref 100
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+                    [BGP/170] 01:01:18, localpref 100, from 10.1.0.2
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+2:10.1.2.3:10::10012::50:00:00:0c:00:00/304 MAC/IP
+                   *[BGP/170] 01:01:17, localpref 100
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+                    [BGP/170] 01:01:17, localpref 100, from 10.1.0.2
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+3:10.1.2.1:10::10011::10.1.2.1/248 IM
+                   *[EVPN/170] 01:58:03
+                       Indirect
+3:10.1.2.1:10::10012::10.1.2.1/248 IM
+                   *[EVPN/170] 01:58:03
+                       Indirect
+3:10.1.2.2:10::10011::10.1.2.2/248 IM
+                   *[BGP/170] 01:28:00, localpref 100
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+                       to 10.1.0.2 via xe-0/0/1.0
+                    [BGP/170] 01:28:00, localpref 100, from 10.1.0.2
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+                       to 10.1.0.2 via xe-0/0/1.0
+3:10.1.2.2:10::10012::10.1.2.2/248 IM
+                   *[BGP/170] 01:28:00, localpref 100
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+                       to 10.1.0.2 via xe-0/0/1.0
+                    [BGP/170] 01:28:00, localpref 100, from 10.1.0.2
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+                       to 10.1.0.2 via xe-0/0/1.0
+3:10.1.2.3:10::10011::10.1.2.3/248 IM
+                   *[BGP/170] 01:04:20, localpref 100
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+                    [BGP/170] 01:04:21, localpref 100, from 10.1.0.2
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+3:10.1.2.3:10::10012::10.1.2.3/248 IM
+                   *[BGP/170] 01:04:20, localpref 100
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+                    [BGP/170] 01:04:21, localpref 100, from 10.1.0.2
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+```
+
+
+
+
+
+
+
+
+
+---
+
+set interfaces xe-0/0/2 native-vlan-id 100
+set interfaces xe-0/0/2 flexible-vlan-tagging
+---
+
+
+
+
+
+
+
+
+root@swLeaf01> show evpn database
+Instance: EVPN-VLAN-AWARE
+VLAN  DomainId  MAC address        Active source                  Timestamp        IP address
+     10031      50:00:00:0f:00:00  xe-0/0/2.0                     Sep 13 08:33:19  192.168.31.1
+
+
+root@swLeaf01> show route table bgp.evpn.0
+
+bgp.evpn.0: 4 destinations, 4 routes (4 active, 0 holddown, 0 hidden)
++ = Active Route, - = Last Active, * = Both
+
+2:10.1.2.1:30::10031::50:00:00:0f:00:00/304 MAC/IP
+                   *[EVPN/170] 00:06:09
+                       Indirect
+2:10.1.2.1:30::10031::50:00:00:0f:00:00::192.168.31.1/304 MAC/IP
+                   *[EVPN/170] 00:06:09
+                       Indirect
+3:10.1.2.1:30::32::10.1.2.1/248 IM
+                   *[EVPN/170] 00:06:22
+                       Indirect
+3:10.1.2.1:30::10031::10.1.2.1/248 IM
+                   *[EVPN/170] 00:06:22
+                       Indirect
+
+{master:0}
+root@swLeaf01> show route table EVPN-VLAN-AWARE.evpn.0
+
+EVPN-VLAN-AWARE.evpn.0: 4 destinations, 4 routes (4 active, 0 holddown, 0 hidden)
++ = Active Route, - = Last Active, * = Both
+
+2:10.1.2.1:30::10031::50:00:00:0f:00:00/304 MAC/IP
+                   *[EVPN/170] 00:06:28
+                       Indirect
+2:10.1.2.1:30::10031::50:00:00:0f:00:00::192.168.31.1/304 MAC/IP
+                   *[EVPN/170] 00:06:28
+                       Indirect
+3:10.1.2.1:30::32::10.1.2.1/248 IM
+                   *[EVPN/170] 00:06:41
+                       Indirect
+3:10.1.2.1:30::10031::10.1.2.1/248 IM
+                   *[EVPN/170] 00:06:41
+                       Indirect
+
+{master:0}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+---
+set vlans MGMT vlan-id 100
+
+set vlans VLANAWARE01 vlan-id 31
+set vlans VLANAWARE01 vxlan vni 10031
+set vlans VLANAWARE02 vlan-id 32
+set vlans VLANAWARE02 vxlan vni 10032
+
+!set interfaces xe-0/0/2 flexible-vlan-tagging
+!set interfaces xe-0/0/2 encapsulation flexible-ethernet-services
+
+set interfaces xe-0/0/2 native-vlan-id 100
+set interfaces xe-0/0/2 unit 0 family ethernet-switching interface-mode trunk
+set interfaces xe-0/0/2 unit 0 family ethernet-switching vlan members all
+
+set switch-options vtep-source-interface lo0.0
+set switch-options route-distinguisher 10.1.2.1:30
+set switch-options vrf-target target:65000:10030
+
+set protocols evpn encapsulation vxlan
+set protocols evpn extended-vni-list 10031
+set protocols evpn extended-vni-list 10032
+set protocols evpn vni-options vni 10031 vrf-target target:65000:10031
+set protocols evpn vni-options vni 10032 vrf-target target:65000:10032
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Предварительно, настроим пул VLAN:
 ```
 ! VLAN используемые в модели VLAN-Based
@@ -1053,10 +1508,259 @@ set vlans VLANBUNDLE02 vlan-id 22
 ! VLAN используемые в модели VLAN-Aware
 set vlans VLANAWARE01 vlan-id 31
 set vlans VLANAWARE02 vlan-id 32
+
+! VLAN для In-Band управления серверами
+set vlans MGMT vlan-id 100
+```
+Сейчас абстрагируемся от второй линии сервера (`Gi2`), реализующей Multihoming-подключние между коммутаторами swLeaf01 и swLeaf02 и будем воспринимать его в качестве транка, пропускающего весь пул объявленных VLAN:
+```
+set interfaces xe-0/0/2 encapsulation flexible-ethernet-services    ! Активировать поддержку расширенных типов инкапсуляции на физическом уровне интерфейса
+set interfaces xe-0/0/2 flexible-vlan-tagging                       ! Обрабатывать различне типы инкапсуляции и тегирования
+set interfaces xe-0/0/2 native-vlan-id 100                          ! Изменяем VLAN по-умолчанию
+
+??????? - надо же запустить транк и использовать In-Band для VLAN001!
 ```
 
-##### 1. Модель: VLAN-Based (VLAN 10 и VLAN 11)
-В этой модели один инстанс строго равен одному VLAN. Поскольку у нас всего 2 VLAN, мы обязаны создать два отдельных инстанса, каждый со своим уникальным RD/RT и VNI. Однако, учитывая версионность виртуального коммутатора, используется старый механизм конфигурирования сервисов (не `mac-vrf`):
+##### 1. Модель: VLAN-Based (VLAN 11 и VLAN 12)
+Как выяснилось, данная модель не работает в виртуальном окружении vQFX.
+
+##### 2. Модель: VLAN-Bundle (VLAN 21 и VLAN 22)
+Оба VLAN помещаются в один инстанс. Они делят общую таблицу MAC-адресов (Bridge Table) и используют один общий VNI для передачи данных в фабрику.
+
+Подготавливаем VLAN-скоп для сервиса VLAN-Bundle:
+```
+set interfaces xe-0/0/2 unit 20 encapsulation vlan-bridge
+set interfaces xe-0/0/2 unit 20 vlan-id-list [ 21 22 ]
+```
+
+Команда encapsulation vlan-bridge переводит сабинтерфейс в уровень L2-коммутации, а vlan-id-list фильтрует входящий трафик с указанными тегами. Именно указанный тип инкапсуляции позволяет привязывать к одному юниту как одиночные вланы (`vlan-id`), так и их списки/диапазоны (`vlan-id-list`), что необходимо для моделей VLAN-Based и VLAN-Bundle.
+
+Далее, настроим 
+
+--- set interfaces vtep.0
+
+Из глобальных параметров осталось настроить лишь источник VTEP-туннелей:
+
+set switch-options vtep-source-interface lo0.0
+
+# ВОТ ОН: vlan-id-list на юните с инкапсуляцией vlan-bridge
+
+
+# 4. Настройка инстанса (СТРОГО тип evpn, БЕЗ указания vlan-id)
+set routing-instances eviVLANBUNDLE instance-type evpn
+
+
+# Добавляем в инстанс сам клиентский юнит и VTEP
+set routing-instances eviVLANBUNDLE interface xe-0/0/2.20
+set routing-instances eviVLANBUNDLE interface vtep.0
+
+# Настройки BGP Control Plane
+set routing-instances eviVLANBUNDLE route-distinguisher 10.1.2.1:10020
+set routing-instances eviVLANBUNDLE vrf-target target:65000:10020
+set routing-instances eviVLANBUNDLE protocols evpn encapsulation vxlan
+
+# 5. Обязательный блок VXLAN с флагами сохранения тегов внутри VNI
+set routing-instances eviVLANBUNDLE vxlan vni 10020
+set routing-instances eviVLANBUNDLE vxlan encapsulate-inner-vlan
+set routing-instances eviVLANBUNDLE vxlan decapsulate-accept-inner-vlan
+
+set routing-instances eviVLANBUNDLE vtep-source-interface lo0.0
+
+
+
+
+
+
+
+
+
+
+
+##### 3. Модель: VLAN-Aware Bundle (VLAN 31 и VLAN 32)
+
+set vlans V10 vlan-id 10
+set vlans V10 vxlan vni 10010
+set vlans V20 vlan-id 20
+set vlans V20 vxlan vni 10020
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+В этой модели несколько VLAN объединяются (бандлятся) внутри одного инстанса `instance-type evpn`, но при этом они делят одну общую таблицу MAC-адресов.
+
+Как работает: Несколько VLAN пропускаются через одну и ту же сетевую карту (инстанс) и используют единое пространство MAC-адресов. Это аналог port-based псевдопроводов (PW).
+
+Недостатки и ограничения: MAC-адреса хостов во всех упакованных вланах обязаны быть уникальными (иначе произойдет конфликт/флаппинг). Модель не поддерживает создание L3-интерфейсов (IRB), трансляцию VLAN ID и изоляцию трафика на уровне MAC.
+
+
+
+# 1. Настройка клиентского интерфейса
+
+set interfaces xe-0/0/2 flexible-vlan-tagging
+set interfaces xe-0/0/2 encapsulation flexible-ethernet-services
+
+# 2. Настройка клиентского интерфейса (Trunk Enterprise-style)
+set interfaces xe-0/0/2 unit 30 family ethernet-switching interface-mode trunk
+set interfaces xe-0/0/2 unit 30 family ethernet-switching vlan members [ 31 32 ]
+
+
+
+set routing-instances EVPN-VLAN-AWARE instance-type virtual-switch
+set routing-instances EVPN-VLAN-AWARE vtep-source-interface lo0.0
+set routing-instances EVPN-VLAN-AWARE route-distinguisher 10.1.2.1:30
+set routing-instances EVPN-VLAN-AWARE vrf-target target:65000:30
+
+# Привязываем физический порт (целиком unit 0)
+set routing-instances EVPN-VLAN-AWARE interface xe-0/0/2.0
+
+# Включаем EVPN для диапазона вланов
+set routing-instances EVPN-VLAN-AWARE protocols evpn encapsulation vxlan
+set routing-instances EVPN-VLAN-AWARE protocols evpn extended-vlan-list [ 31 32 ]
+
+# Создаем домены внутри VS (на QFX это секция 'vlans', а не 'bridge-domains')
+set routing-instances EVPN-VLAN-AWARE vlans VLAN-31 vlan-id 31
+set routing-instances EVPN-VLAN-AWARE vlans VLAN-31 vxlan vni 10031
+
+set routing-instances EVPN-VLAN-AWARE vlans VLAN-32 vlan-id 32
+set routing-instances EVPN-VLAN-AWARE vlans VLAN-32 vxlan vni 10032
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+---
+
+# 1. Настройка клиентского интерфейса
+
+set interfaces xe-0/0/2 flexible-vlan-tagging
+set interfaces xe-0/0/2 encapsulation flexible-ethernet-services
+
+# 2. Настройка клиентского интерфейса (Trunk Enterprise-style)
+set interfaces xe-0/0/2 unit 30 family bridge interface-mode trunk
+set interfaces xe-0/0/2 unit 30 family bridge vlan-id-list [ 31 32 ]
+
+# 3. Инстанс Virtual-Switch и EVPN
+set routing-instances eviVLANAWARE instance-type virtual-switch
+set routing-instances eviVLANAWARE vtep-source-interface lo0.0
+set routing-instances eviVLANAWARE interface xe-0/0/2.0
+set routing-instances eviVLANAWARE route-distinguisher 10.1.2.1:30
+set routing-instances eviVLANAWARE vrf-target target:65000:30
+
+# Активация EVPN для VLAN-Aware Bundle
+set routing-instances eviVLANAWARE protocols evpn encapsulation vxlan
+set routing-instances eviVLANAWARE protocols evpn extended-vlan-list [ 31 32 ]
+
+# 4. Определение доменов через секцию 'vlans' (Специфика QFX)
+set routing-instances eviVLANAWARE vlans VLANAWARE01 vlan-id 31
+set routing-instances eviVLANAWARE vlans VLANAWARE01 vxlan vni 10031
+
+set routing-instances eviVLANAWARE vlans VLANAWARE02 vlan-id 32
+set routing-instances eviVLANAWARE vlans VLANAWARE02 vxlan vni 10032
+
+
+
+
+
+
+
+
+
+
+
+---
+
+Настроим, сначала интерфейс подключения или, как его еще называют, ESI (Ethernet Segment Identifier).
+
+При использовании данной модели есть существенная тонкость: в старом синтаксисе (`instance-type evpn`) физический порт обязательно должен быть настроен с инкапсуляцией `vlan-bridge`, а логический юнит должен принимать тег этого влана.
+
+
+
+Настроим подключение со стороны swLeaf01:
+```
+set interfaces xe-0/0/2 flexible-vlan-tagging   ! Обрабатывать различне типы инкапсуляции и тегирования
+set interfaces xe-0/0/2 encapsulation flexible-ethernet-services ! Активировать поддержку расширенных типов инкапсуляции на физическом уровне интерфейса
+set interfaces xe-0/0/2 unit 11 vlan-id 11
+set interfaces xe-0/0/2 unit 11 encapsulation vlan-bridge
+```
+
+В этой модели один инстанс строго равен одному VLAN. Поскольку у нас всего 2 VLAN, мы обязаны создать два отдельных инстанса, каждый со своим уникальным RD/RT и VNI.
+
+Cобираем инстанс под данный VLAN011:
+```
+set routing-instances eviVLANBASED011 instance-type evpn
+set routing-instances eviVLANBASED011 vlan-id 11
+set routing-instances eviVLANBASED011 interface xe-0/0/2.11
+set routing-instances eviVLANBASED011 route-distinguisher 10.1.2.1:11
+set routing-instances eviVLANBASED011 vrf-target target:65000:11
+set routing-instances eviVLANBASED011 protocols evpn ----
+```
+
+
+# 1. Глобальная инициализация виртуального VXLAN-интерфейса (VTEP)
+set interfaces vxl-0/0/0 unit 0
+
+# 2. Настройка клиентского интерфейса (до сервера)
+set interfaces xe-0/0/2 encapsulation flexible-ethernet-services
+set interfaces xe-0/0/2 flexible-vlan-tagging
+set interfaces xe-0/0/2 unit 11 encapsulation vlan-bridge
+set interfaces xe-0/0/2 unit 11 vlan-id 11
+set interfaces xe-0/0/2 gigether-options no-link-carrier
+
+# 3. Настройка инстанса и сопоставления с VXLAN (VNI)
+set routing-instances eviVLANBASED011 instance-type evpn
+set routing-instances eviVLANBASED011 vlan-id 11
+
+# Привязка физического и виртуального VXLAN портов к инстансу
+set routing-instances eviVLANBASED011 interface xe-0/0/2.11
+set routing-instances eviVLANBASED011 interface vxl-0/0/0.0
+
+# Параметры BGP EVPN плоскости управления
+set routing-instances eviVLANBASED011 route-distinguisher 10.0.0.1:11
+set routing-instances eviVLANBASED011 vrf-target target:64512:11
+
+# Активация VXLAN-инкапсуляции и лимитов для VNI внутри инстанса
+set routing-instances eviVLANBASED011 protocols evpn encapsulation vxlan
+set routing-instances eviVLANBASED011 protocols evpn extended-vlan-list 11
+set routing-instances eviVLANBASED011 protocols evpn vni-options vni 10011
+
+
+ПОКА НЕ ПОЛУЧИЛОСЬ
+
+---
+
+
+
+
+
+> set interfaces xe-0/0/1 gigether-options no-carrier
+
+
+
+
+Настроим, сначала интерфейс подключения, 
 ```
 
 ```
