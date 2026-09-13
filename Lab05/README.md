@@ -1035,8 +1035,8 @@ Peer                     AS      InPkt     OutPkt    OutQ   Flaps Last Up/Dwn St
 | **Масштабируемость** | Низкая (много инстансов) | Высокая | Высокая (рекомендуется) |
 | **Поддержка L3 (IRB)** | Да | Нет | Да |
 
-##### Модель: VLAN-Aware Bundle (VLAN 31 и VLAN 32)
-Начнем с модели VLAN-Aware, так как она является рекомендуемой. Учитывая желание сконфигурировать разные модели сервисов, дальнейшие действия я буду проводить в отдельном экземпляре:
+##### Модель: VLAN-Aware Bundle (VLAN 11 и VLAN 12)
+Начну с модели VLAN-Aware, так как она является рекомендуемой производителем оборудования. Учитывая мое желание сконфигурировать разные модели сервисов, дальнейшие действия я буду проводить в отдельных экземплярах:
 ```
 set routing-instances eviVLANAWARE instance-type virtual-switch
 
@@ -1055,7 +1055,7 @@ set routing-instances eviVLANAWARE vlans VLANAWARE02 vlan-id 12
 set routing-instances eviVLANAWARE vlans VLANAWARE02 vxlan vni 10012
 ```
 
-Эти VLAN будут находиться в таблице соответствующего виртуального коммутатора (`eviVLANAWARE`), что мы увидить немного ниже. 
+Эти VLAN будут находиться в таблице соответствующего виртуального коммутатора (`eviVLANAWARE`), что мы увидим немного ниже. 
 
 Конфигурируем интерфейс подключения из учета единственного линка (Gi1 <-> XE-0/0/2):
 ```
@@ -1082,7 +1082,7 @@ eviVLANAWARE            VLANAWARE02           12
                                                            xe-0/0/2.0*
 ```
 
-Благодаря этому выоду видно, что мы при конфигурировании экземпляра маршрутизации (`eviVLANAWARE`) косвенно создали и соответствующие VLAN'ы. Созданный ранее VLAN 100 находится в виртуальном коммутаторе `default-switch` и даже в определении не пересекается с VLAN'ами других виртуальных коммутаторов.
+Благодаря этому выводу видно, что во время конфигурирования экземпляра маршрутизации (`eviVLANAWARE`) были косвенно создали и соответствующие VLAN'ы. Созданный ранее VLAN 100 находится в виртуальном коммутаторе `default-switch` и даже в определении не пересекается с VLAN'ами других виртуальных коммутаторов.
 
 Если сейчас проверить базу EVPN (`show evpn database`) - она будет пустой, но работоспособность экземпляра маршрутизации мы сможем увидеть по контекстной подсказке:
 ```
@@ -1096,7 +1096,7 @@ Possible completions:
   inet6.0
 ```
 
-Это дает нам возможность даже увидеть состояние таблицы экземпляра:
+Это дает нам возможность увидеть состояние таблицы экземпляра:
 ```
 root@swLeaf01> show route table bgp.evpn.0
 
@@ -1111,7 +1111,7 @@ bgp.evpn.0: 2 destinations, 2 routes (2 active, 0 holddown, 0 hidden)
                        Indirect
 ```
 
-и даже посмотреть, что коммутатор swLeaf01 анонсирует, например, в сторону коммутатора swSpine01:
+и даже посмотреть, какую маршрутную информацию коммутатор swLeaf01 анонсирует, например, в сторону коммутатора swSpine01:
 ```
 root@swLeaf01> show route advertising-protocol bgp 10.1.0.1
 
@@ -1130,7 +1130,7 @@ eviVLANAWARE.evpn.0: 2 destinations, 2 routes (2 active, 0 holddown, 0 hidden)
 *                         Self                         100        I
 ```
 
-Сейчас это маршруты EVPN типа 3, (Type 3 Route), которые называются IMET (Inclusive Multicast Ethernet Tag). Упрощенно - это автоматические строители VxLAN-туннелей (VTEP-to-VTEP).
+Сейчас это маршруты EVPN типа 3, (Type 3 Route), называемые IMET (Inclusive Multicast Ethernet Tag) и, если упрощенно, являются "автоматическими строителями" VxLAN-туннелей (VTEP-to-VTEP).
 
 У нас в качестве сервера выступает Cisco IOS роутер. Сконфигурируем его следующим образом:
 ```
@@ -1157,7 +1157,7 @@ interface GigabitEthernet1.12
  ip address 192.168.12.1 255.255.255.0
 ```
 
-Как только мы настроили его и подняли интерфейс `Gi1` (при этом даже не пинговали), подсистема EVPN изучит MAC-адреса клиентов (если они не Silent):
+Как только мы настроили его и подняли интерфейс `Gi1`, подсистема EVPN изучит MAC-адреса клиентов (если они не Silent Host):
 ```
 root@swLeaf01> show evpn database
 Instance: eviVLANAWARE
@@ -1193,7 +1193,7 @@ bgp.evpn.0: 6 destinations, 6 routes (6 active, 0 holddown, 0 hidden)
                        Indirect
 ```
 
-Теперь увидеть изученные MAC-адреса мы сможем и из базы EVPN:
+Теперь увидеть изученные MAC-адреса мы сможем в базе EVPN:
 ```
 root@swLeaf02> show evpn database
 Instance: eviVLANAWARE
@@ -1264,23 +1264,9 @@ Sending 5, 100-byte ICMP Echos to 192.168.11.2, timeout is 2 seconds:
 Success rate is 60 percent (3/5), round-trip min/avg/max = 369/393/428 ms
 ```
 
-Как видно, мы потеряли на 1 пакет больше, чем в широковещательной среде.
+Как видно, мы потеряли на 1 пакет больше, чем в широковещательной среде из-за "удлиннения" траектории за чему дополнительной инкапсуляции.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+Полная таблица экземпляра выглядит следующим образом:
 ```
 root@swLeaf01> show route table eviVLANAWARE.evpn.0
 
@@ -1365,13 +1351,168 @@ eviVLANAWARE.evpn.0: 12 destinations, 20 routes (12 active, 0 holddown, 0 hidden
                     >  to 10.1.0.1 via xe-0/0/0.0
 ```
 
+Дополнительно можно посмотреть на интерфейсы VTEP, создаваемые коммутатором:
+```
+root@swLeaf01> show interfaces vtep
+Physical interface: vtep, Enabled, Physical link is Up
+  Interface index: 641, SNMP ifIndex: 516
+  Type: Software-Pseudo, Link-level type: VxLAN-Tunnel-Endpoint, MTU: Unlimited,
+  Speed: Unlimited
+  Device flags   : Present Running
+  Link type      : Full-Duplex
+  Link flags     : None
+  Last flapped   : Never
+    Input packets : 0
+    Output packets: 0
+
+  Logical interface vtep.32768 (Index 569) (SNMP ifIndex 575)
+    Flags: Up SNMP-Traps 0x4000 Encapsulation: ENET2
+    Ethernet segment value: 00:00:00:00:00:00:00:00:00:00, Mode: single-homed,
+    Multi-homed status: Forwarding
+    VXLAN Endpoint Type: Source, VXLAN Endpoint Address: 10.1.2.1, L2 Routing Instance: eviVLANAWARE, L3 Routing Instance: default
+    Input packets : 0
+    Output packets: 0
+
+  Logical interface vtep.32769 (Index 559) (SNMP ifIndex 579)
+    Flags: Up SNMP-Traps Encapsulation: ENET2
+    VXLAN Endpoint Type: Remote, VXLAN Endpoint Address: 10.1.2.2, L2 Routing Instance: eviVLANAWARE, L3 Routing Instance: default
+    Input packets : 131
+    Output packets: 18
+    Protocol eth-switch, MTU: Unlimited
+      Flags: Trunk-Mode
+
+  Logical interface vtep.32770 (Index 571) (SNMP ifIndex 580)
+    Flags: Up SNMP-Traps Encapsulation: ENET2
+    VXLAN Endpoint Type: Remote, VXLAN Endpoint Address: 10.1.2.3, L2 Routing Instance: eviVLANAWARE, L3 Routing Instance: default
+    Input packets : 47
+    Output packets: 47
+    Protocol eth-switch, MTU: Unlimited
+      Flags: Trunk-Mode
+```
+
+Попробуем переделать подключение сервера `Server01` с использованием технологии мультихоминга (Multihoming).
+
+Я начну делать со стороны swLaef02. Соберем, сначала, LAG-интерфейс:
+```
+set interfaces xe-0/0/2 ether-options 802.3ad ae0
+set interfaces ae0 aggregated-ether-options lacp active
+set interfaces ae0 aggregated-ether-options lacp system-id 00:11:22:33:44:55
+```
+
+> По стандарту LACP, сервер строит агрегированный канал (Port-Channel / Bond) только в том случае, если от всех сетевых карт ему прилетают LACP-кадры с абсолютно одинаковым MAC-адресом коммутатора (System ID).
+
+Зададим уникальный идентификатор ESI (Ethernet Segment Identifier) - это уникальный 10-байтный ID на всей EVPN-фабрике. Когда swLeaf01 и swLeaf02 видят, что у них на портах ae0 прописан один и тот же ESI, они генерируют специальный системный маршрут EVPN Type 4 (Ethernet Segment route) и отправляют его на Spine.
+
+set interfaces ae0 esi 00:10:01:02:02:00:00:00:00:02
+set interfaces ae0 esi all-active
 
 
 
+# 4. Переводим ae0 в режим L2-транка и прописываем вланы
+set interfaces ae0 unit 0 family ethernet-switching interface-mode trunk
+set interfaces ae0 unit 0 family ethernet-switching vlan members [ 11 12 ]
+
+# 5. Привязываем интерфейс ae0 к нашему инстансу вместо одиночного xe-0/0/2
+delete routing-instances EVPN-VLAN-AWARE interface xe-0/0/2.0
+set routing-instances EVPN-VLAN-AWARE interface ae0.0
+
+---
 
 
+Пустой вывод означает, что LACP на коммутаторе вообще не запущен. Физический порт xe-0/0/2.0 привязан к ae0.0, но сам процесс LACP не обменивается кадрами.В Juniper JunOS агрегированный интерфейс (aeX) не начнет работать по протоколу LACP, пока ты явно не укажешь ему количество поддерживаемых физических портов в системе (device-count). Без этой глобальной команды конфигурация LACP внутри интерфейса ae0 просто игнорируется ядром.
+
+root@swLeaf02# set chassis aggregated-devices ethernet device-count 10
 
 
+oot@swLeaf02> show lacp interfaces
+Aggregated interface: ae0
+    LACP state:       Role   Exp   Def  Dist  Col  Syn  Aggr  Timeout  Activity
+      xe-0/0/2       Actor    No    No    No   No   No   Yes     Fast    Active
+      xe-0/0/2     Partner   Yes    No    No   No   No   Yes     Fast    Active
+    LACP protocol:        Receive State  Transmit State          Mux State
+      xe-0/0/2                  Current   Fast periodic            Waiting
+
+root@swLeaf02> show evpn database
+Instance: eviVLANAWARE
+VLAN  DomainId  MAC address        Active source                  Timestamp        IP address
+     10011      00:1e:49:49:74:c0  00:10:01:02:02:00:00:00:00:02  Sep 13 12:15:59
+     10011      50:00:00:05:00:00  xe-0/0/3.0                     Sep 13 09:54:52
+     10011      50:00:00:0c:00:00  10.1.2.3                       Sep 13 10:04:39
+     10011      50:00:00:0f:00:00  10.1.2.1                       Sep 13 10:27:42
+     10012      00:1e:49:49:74:c0  00:10:01:02:02:00:00:00:00:02  Sep 13 12:15:59
+     10012      50:00:00:05:00:00  xe-0/0/3.0                     Sep 13 09:55:09
+     10012      50:00:00:0c:00:00  10.1.2.3                       Sep 13 10:04:40
+     10012      50:00:00:0f:00:00  10.1.2.1                       Sep 13 10:27:30
+
+Server01#ping 192.168.11.2
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.2, timeout is 2 seconds:
+.!!!!
+Success rate is 80 percent (4/5), round-trip min/avg/max = 194/323/403 ms
+Server01#ping 192.168.11.3
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.3, timeout is 2 seconds:
+.!!!!
+Success rate is 80 percent (4/5), round-trip min/avg/max = 357/552/662 ms
+
+Перейдем на swLeaf01 и произведем аналогичные действия:
+
+root@swLeaf01> show evpn database
+Instance: eviVLANAWARE
+VLAN  DomainId  MAC address        Active source                  Timestamp        IP address
+     10011      00:1e:49:49:74:c0  00:10:01:02:02:00:00:00:00:02  Sep 13 12:16:34  192.168.11.11
+     10011      50:00:00:05:00:00  10.1.2.2                       Sep 13 12:16:46  192.168.11.2
+     10011      50:00:00:0c:00:00  10.1.2.3                       Sep 13 12:16:52  192.168.11.3
+     10012      00:1e:49:49:74:c0  00:10:01:02:02:00:00:00:00:02  Sep 13 12:16:01
+     10012      50:00:00:05:00:00  10.1.2.2                       Sep 13 09:55:11
+     10012      50:00:00:0c:00:00  10.1.2.3                       Sep 13 10:04:40
+
+ну и после пинга:
+
+root@swLeaf01> show evpn database
+Instance: eviVLANAWARE
+VLAN  DomainId  MAC address        Active source                  Timestamp        IP address
+     10011      00:1e:49:49:74:c0  00:10:01:02:02:00:00:00:00:02  Sep 13 12:16:34  192.168.11.11
+     10011      50:00:00:05:00:00  10.1.2.2                       Sep 13 12:16:46  192.168.11.2
+     10011      50:00:00:0c:00:00  10.1.2.3                       Sep 13 12:16:52  192.168.11.3
+     10012      00:1e:49:49:74:c0  00:10:01:02:02:00:00:00:00:02  Sep 13 12:29:33  192.168.12.11
+     10012      50:00:00:05:00:00  10.1.2.2                       Sep 13 12:29:31  192.168.12.2
+     10012      50:00:00:0c:00:00  10.1.2.3                       Sep 13 12:29:36  192.168.12.3
+
+root@swLeaf01> show ethernet-switching table
+
+MAC flags (S - static MAC, D - dynamic MAC, L - locally learned, P - Persistent static
+           SE - statistics enabled, NM - non configured MAC, R - remote PE MAC, O - ovsdb MAC)
+
+
+Ethernet switching table : 6 entries, 6 learned
+Routing instance : eviVLANAWARE
+   Vlan                MAC                 MAC      Logical                SVLBNH/      Active
+   name                address             flags    interface              VENH Index   source
+   VLANAWARE01         00:1e:49:49:74:c0   DR       ae0.0
+   VLANAWARE01         50:00:00:05:00:00   D        vtep.32769                          10.1.2.2
+   VLANAWARE01         50:00:00:0c:00:00   D        vtep.32770                          10.1.2.3
+   VLANAWARE02         00:1e:49:49:74:c0   DLR      ae0.0
+   VLANAWARE02         50:00:00:05:00:00   D        vtep.32769                          10.1.2.2
+   VLANAWARE02         50:00:00:0c:00:00   D        vtep.32770                          10.1.2.3
+
+root@swLeaf01> show route table bgp.evpn.0 match-prefix 4:*
+
+bgp.evpn.0: 23 destinations, 39 routes (23 active, 0 holddown, 0 hidden)
++ = Active Route, - = Last Active, * = Both
+
+4:10.1.2.1:0::100102020000000002:10.1.2.1/296 ES
+                   *[EVPN/170] 00:16:24
+                       Indirect
+4:10.1.2.2:0::100102020000000002:10.1.2.2/296 ES
+                   *[BGP/170] 00:16:56, localpref 100
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+                       to 10.1.0.2 via xe-0/0/1.0
+                    [BGP/170] 00:16:56, localpref 100, from 10.1.0.2
+                      AS path: I, validation-state: unverified
+                    >  to 10.1.0.1 via xe-0/0/0.0
+                       to 10.1.0.2 via xe-0/0/1.0
 
 ---
 
