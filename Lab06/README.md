@@ -4,6 +4,9 @@
 - [Условие задачи](#условие-задачи)
 - [Описание выбранного решения](#описание-выбранного-решения)
 - [Настройка Underlay (ISIS)](#настройка-underlay-isis)
+- [Настройка L2-слоя наложенной сети (Overlay)](#настройка-l2-слоя-наложенной-сети-overlay)
+- [Настройка сервисов EVPN](#настройка-сервисов-evpn)
+  - [Cервисная модель VLAN-Based](#сервисная-модель-vlan-based)
 
 ### Условие задачи
 В этой самостоятельной работе мы ожидаем, что вы самостоятельно:
@@ -21,7 +24,7 @@
 ![Схема сети](scheme2.png)
 
 ### Настройка Underlay (ISIS)
-Первоначально, рассмотрим решение без vPC-пары (M-LAG в терминологии Arista) и Multihoming подключения srvHost03: будем считать первые линки отсутствующими. Тогда конфигурация всех коммутаторов фабрики будут сходной:
+Первоначально, рассмотрим решение без vPC-пар (M-LAG в терминологии Arista) и Multihoming подключений на коммутаторе `srvHost03`: будем считать рабочим только линк srvHost03:Gi2 <-> swLeaf04:Ethernet4. Тогда конфигурация всех коммутаторов фабрики будут сходной:
 ```
 hostname swSpine01
 dns domain Underlay.local
@@ -167,9 +170,6 @@ Source Codes:
            via 10.1.2.3, Ethernet3
            via 10.1.2.4, Ethernet4
            via 10.1.255.1, Ethernet5
- I L2     10.1.1.1/32 [115/20]
-           via 10.1.2.1, Ethernet1
-           via 10.1.2.2, Ethernet2
  I L2     10.1.2.1/32
            directly connected, Ethernet1
  I L2     10.1.2.2/32
@@ -298,7 +298,7 @@ router bgp 65000
 
 Данная конфигурация соответствует всем коммутаторам уровня Leaf, на котороых ткрминируются эти VLAN'ы.
 
-Настроим абонентский порт `rtBorder01` для маршрутизации Сentralized Routing:
+Настроим абонентский порт `Gi1` роутера `rtBorder01` для маршрутизации Сentralized Routing:
 ```
 hostname rtBorder01
 !
@@ -358,8 +358,7 @@ Packet sent with a source address of FE80::5200:FF:FE06:0%GigabitEthernet1
 Success rate is 100 percent (5/5), round-trip min/avg/max = 2/4/8 ms
 ```
 
-Далее, настроим абонентские подключения на всех хостах со вторых линков.
-Я начнал с настройки swLeaf04:
+Далее, настроим абонентские подключения `srvHost03` к `swLeaf04`.
 ```
 hostname srvHost03
 !
@@ -396,9 +395,9 @@ interface GigabitEthernet2.12
  ip address 192.168.12.3 255.255.255.0
 ```
 
-Следует отметить, что на роутере я передаю VLAN в отдельный IP-VRF чтобы разорвать связанность на уровне хоста.
+Следует отметить, что на роутере я передаю VLAN в отдельный IP-VRF чтобы разорвать связанность на уровне самого хоста.
 
-После настройки можно проверить маршрутизацию по модели `Сentralized Routing` пинганув себя же через роутер на палке (rtBorder01):
+После настройки можно проверить маршрутизацию по модели Сentralized Routing пинганув себя же через роутер "на палке" (`rtBorder01`):
 
 ```
 srvHost03#ping vrf vrfVLAN-BUNDLE01 192.168.12.3
@@ -414,7 +413,7 @@ Success rate is 100 percent (5/5), round-trip min/avg/max = 31/41/51 ms
 
 Произведем всестороннюю дефектовку работоспособности данной сервисной модели.
 
-Наличие MAC адресов обоих точек терминирования rtBorder01 и srvHost03:
+Наличие MAC адресов обоих точек терминирования `rtBorder01` и `srvHost03`:
 ```
 swLeaf04#show mac address-table
           Mac Address Table
@@ -543,7 +542,153 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
                                  10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
 ```
 
-Учитывая сложную конфигурацию абонентских подключений в лабораторной, 
+#### Сервисная модель VLAN-Bundle
+VLAN-Bundle (VLAN-Bundle Service) — это сервисная модель EVPN, в которой множество клиентских VLAN объединяются в один общий широковещательный домен (MAC-VRF) и передаются через один общий VNI. В рамках этой архитектуры все входящие в бандл VLAN делят между собой единый экземпляр BGP EVPN (EVI) с общими значениями Route Distinguisher (RD) и Route Target (RT), что позволяет радикально снизить нагрузку на Control Plane коммутаторов за счет сокращения количества BGP-маршрутов. Для корректной работы модели в рамках одного MAC-VRF строго запрещено пересечение (оверлап) MAC-адресов в разных VLAN, поскольку поиск в таблице коммутации и анонсирование маршрутов EVPN Type 2 происходят без учета тега VLAN (однако сам оригинальный тег 802.1Q сохраняется при инкапсуляции в VXLAN-заголовок для разделения трафика на принимающей стороне).
+
+Производитель полностью отказался от её выделенной реализации в CLI, так как классический VLAN Bundle (в котором несколько VLAN делят один VNI и одну общую Layer 2 таблицу) нарушает базовую логику изоляции в ЦОД и практически не применяется на практике.
+
+#### Сервисная модель VLAN-Aware Bundle
+Начну с настройку со стороны `swBorderLeaf01`:
+```
+vlan 21
+   name VLAN-AWARE01
+vlan 22
+   name VLAN-AWARE02
+!
+interface Vxlan1
+   vxlan vlan 21 vni 10021
+   vxlan vlan 22 vni 10022
+!
+router bgp 65000
+   vlan-aware-bundle vabBUNDLE01
+      rd auto
+      route-target both 65000:20
+      redistribute learned
+      vlan 21-22
+```
+
+Дополним конфигурацию роутера rtBorder01 для маршрутизаиции по схеме Сentralized Routing:
+```
+interface GigabitEthernet1.21
+ description --- Virtual (VLAN021): VLAN-AWARE01
+ encapsulation dot1Q 21
+ ip address 192.168.21.254 255.255.255.0
+!
+interface GigabitEthernet1.22
+ description --- Virtual (VLAN022): VLAN-AWARE02
+ encapsulation dot1Q 22
+ ip address 192.168.22.254 255.255.255.0
+```
+
+и хоста `srvHost03`:
+```
+vrf definition vrfVLAN-BUNDLE01
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition vrfVLAN-BUNDLE02
+ !
+ address-family ipv4
+ exit-address-family
+!
+interface GigabitEthernet2.21
+ description --- Virtual (VLAN021): VLAN-AWARE01
+ encapsulation dot1Q 21
+ vrf forwarding vrfVLAN-AWARE01
+ ip address 192.168.21.3 255.255.255.0
+!
+interface GigabitEthernet2.22
+ description --- Virtual (VLAN022): VLAN-AWARE02
+ encapsulation dot1Q 22
+ vrf forwarding vrfVLAN-AWARE02
+ ip address 192.168.22.3 255.255.255.0
+```
+
+Проверим состояние таблицы MAC-адресов:
+```
+swBorderLeaf01# show mac address-table
+          Mac Address Table
+------------------------------------------------------------------
+
+Vlan    Mac Address       Type        Ports      Moves   Last Move
+----    -----------       ----        -----      -----   ---------
+   1    5000.0006.0000    DYNAMIC     Et4        1       3:15:16 ago
+  11    5000.0006.0000    DYNAMIC     Et4        1       0:05:25 ago
+  11    5000.000c.0001    DYNAMIC     Vx1        1       0:12:48 ago
+  12    5000.0006.0000    DYNAMIC     Et4        1       0:05:25 ago
+  12    5000.000c.0001    DYNAMIC     Vx1        1       0:05:25 ago
+  21    5000.0006.0000    DYNAMIC     Et4        1       0:08:22 ago
+  21    5000.000c.0001    DYNAMIC     Vx1        1       0:06:45 ago
+  22    5000.0006.0000    DYNAMIC     Et4        1       0:05:09 ago
+  22    5000.000c.0001    DYNAMIC     Vx1        1       0:05:08 ago
+Total Mac Addresses for this criterion: 9
+
+          Multicast Mac Address Table
+------------------------------------------------------------------
+
+Vlan    Mac Address       Type        Ports
+----    -----------       ----        -----
+Total Mac Addresses for this criterion: 0
+```
+
+Также глянем на маршруты 2 типа (`mac-ip`):
+```
+swBorderLeaf01#sh bgp evpn route-type mac-ip
+BGP routing table information for VRF default
+Router identifier 10.1.255.1, local AS number 65000
+Route status codes: * - valid, > - active, S - Stale, E - ECMP head, e - ECMP
+                    c - Contributing to ECMP, % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  LocPref Weight  Path
+ * >      RD: 10.1.255.1:11 mac-ip 5000.0006.0000
+                                 -                     -       -       0       i
+ * >      RD: 10.1.255.1:12 mac-ip 5000.0006.0000
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.2.4:11 mac-ip 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.2.4:11 mac-ip 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.4:11 mac-ip 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.1
+ * >Ec    RD: 10.1.2.4:12 mac-ip 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.4:12 mac-ip 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.2.4:12 mac-ip 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.1
+ * >      RD: 10.1.255.1:21 mac-ip 10021 5000.0006.0000
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.2.4:21 mac-ip 10021 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.1
+ *  ec    RD: 10.1.2.4:21 mac-ip 10021 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.4:21 mac-ip 10021 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.3
+ * >      RD: 10.1.255.1:21 mac-ip 10022 5000.0006.0000
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.2.4:21 mac-ip 10022 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.2.4:21 mac-ip 10022 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.4:21 mac-ip 10022 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.1
+```                        
+
+И проверим связанность с другим VRF через роутер "на палке":
+```
+srvHost03#ping vrf vrfVLAN-BUNDLE01 192.168.21.3
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.21.3, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 72/112/216 ms
+```
+
+Как видно, и эта сервисная модель работает.
+
+### Настройка L3VPN
 
 
 
@@ -560,57 +705,7 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
 
 
 
+Перед тем, как перейти к настройкам, удалим с "роутера на палке" (rtBorder01) подинтерфейсы `Gi1.11` и `Gi1.12` чтобы 
 
 
-sh bgp neighbors 10.1.0.1 advertised-routes
-
-
-
-
-
-
-
-swBorderLeaf01#sh interfaces vxlan 1
-Vxlan1 is up, line protocol is up (connected)
-  Hardware is Vxlan
-  Description: --- VxLAN (no VRF): interface for Overlay Control-Plane
-  Source interface is Loopback0 and is active with 10.1.255.1
-  Listening on UDP port 4789
-  Replication/Flood Mode is headend with Flood List Source: EVPN
-  Remote MAC learning via EVPN
-  VNI mapping to VLANs
-  Static VLAN to VNI mapping is
-    [11, 10011]       [12, 10012]
-  Note: All Dynamic VLANs used by VCS are internal VLANs.
-        Use 'show vxlan vni' for details.
-  Static VRF to VNI mapping is not configured
-  Shared Router MAC is 0000.0000.0000
-swBorderLeaf01#show vxlan vni
-VNI to VLAN Mapping for Vxlan1
-VNI         VLAN       Source       Interface       802.1Q Tag
------------ ---------- ------------ --------------- ----------
-10011       11         static       Vxlan1          11
-10012       12         static       Vxlan1          12
-
-VNI to dynamic VLAN Mapping for Vxlan1
-VNI       VLAN       VRF       Source
---------- ---------- --------- ------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-----
-
-commit-confirm
-
-Сentralized Routing
+anycast!?
