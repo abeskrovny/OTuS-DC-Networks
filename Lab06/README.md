@@ -4,8 +4,6 @@
 - [Условие задачи](#условие-задачи)
 - [Описание выбранного решения](#описание-выбранного-решения)
 - [Настройка Underlay (ISIS)](#настройка-underlay-isis)
-  - [Коммутаторы Arista](#коммутаторы-arista)
-  - [Коммутаторы Juniper](#коммутаторы-juniper)
 
 ### Условие задачи
 В этой самостоятельной работе мы ожидаем, что вы самостоятельно:
@@ -18,18 +16,12 @@
 
 Для себя ставлю задачу попробовать возможные сервисные модели и режимы работы IRB, поддерживаемые данным виртуальным коммутатором.
 
-=== ПОПРАВИТЬ ===
+В качестве подстилающей сети я выбираю ISIS за его простоту, гибкость и независимость от стека IP. Для In-Band - IPv6 link-local.
 
-В качестве подстилающей сети придется выбрать либо гомогенную на базе BGP, либо гибридную с использованием BGP и, например, ISIS. Я выбираю ISIS за его простоту, гибкость и независимость от стека IP. Для In-Band - IPv6 link-local.
-
-![Схема сети](scheme.png)
-
-Однако, есть один момент: 
-
-=== ПОПРАВИТЬ ===
+![Схема сети](scheme2.png)
 
 ### Настройка Underlay (ISIS)
-Первоначально, рассмотрим решение без vPC-пары: будем считать линки между swLeaf01 и swLeaf02 отсутствующими. Тогда конфигурация всех коммутаторов фабрики будет сходной:
+Первоначально, рассмотрим решение без vPC-пары (M-LAG в терминологии Arista) и Multihoming подключения srvHost03: будем считать первые линки отсутствующими. Тогда конфигурация всех коммутаторов фабрики будут сходной:
 ```
 hostname swSpine01
 dns domain Underlay.local
@@ -91,8 +83,8 @@ router isis Underlay
 Проверим состояние соседства LLDP:
 ```
 swSpine01#sh lldp neighbors
-Last table change time   : 0:02:33 ago
-Number of table inserts  : 5
+Last table change time   : 1:50:05 ago
+Number of table inserts  : 7
 Number of table deletes  : 2
 Number of table drops    : 0
 Number of table age-outs : 2
@@ -101,19 +93,20 @@ Port          Neighbor Device ID                  Neighbor Port ID    TTL
 ---------- ----------------------------------- ---------------------- ---
 Et1           swLeaf01.Underlay.local             Ethernet1           120
 Et2           swLeaf02.Underlay.local             Ethernet1           120
-Et3           swBorderLeaf01.Underlay.local       Ethernet1           120
+Et3           swLeaf03.Underlay.local             Ethernet1           120
+Et4           swLeaf04.Underlay.local             Ethernet2           120
+Et5           swBorderLeaf01.Underlay.local       Ethernet1           120 
 ```
 
 Состояние стека IPv6, предназначенного для In-Band управления:
 ```
 swSpine01#sh ipv6 neighbors
 IPv6 Address                                  Age Hardware Addr   Interface
-fe80::5200:ff:fecb:38c2                   0:15:10 5000.00cb.38c2  Et1
-fe80::5200:ff:fed5:5dc0                   0:16:31 5000.00d5.5dc0  Et1
-fe80::5200:ff:fed7:ee0b                   0:17:08 5000.00d7.ee0b  Et1
-fe80::5200:ff:fe03:3766                   0:05:44 5000.0003.3766  Et2
-fe80::5200:ff:fed5:5dc0                   0:16:31 5000.00d5.5dc0  Et2
-fe80::5200:ff:fe15:f4e8                   0:44:02 5000.0015.f4e8  Et3
+fe80::5200:ff:fecb:38c2                   2:41:35 5000.00cb.38c2  Et1
+fe80::5200:ff:fe03:3766                   2:43:22 5000.0003.3766  Et2
+fe80::5200:ff:feaf:d3f6                   2:44:24 5000.00af.d3f6  Et3
+fe80::5200:ff:fe88:fe27                   2:43:16 5000.0088.fe27  Et4
+fe80::5200:ff:fe15:f4e8                   2:42:42 5000.0015.f4e8  Et5
 ```
 
 Проверим связанность с любым из соседей:
@@ -133,17 +126,19 @@ rtt min/avg/max/mdev = 0.023/0.113/0.473/0.180 ms, ipg/ewma 3.656/0.287 ms
 
 Далее, проверим сходимость протокола ISIS:
 ```
-swSpine01#show isis neighbors
+swSpine01#sh isis neighbors
 
 Instance  VRF      System Id        Type Interface          SNPA              State Hold time   Circuit Id
-Underlay  default  swLeaf01         L2   Ethernet1          P2P               UP    29          1A
-Underlay  default  swLeaf02         L2   Ethernet2          P2P               UP    24          14
-Underlay  default  swBorderLeaf01   L2   Ethernet3          P2P               UP    21          11
+Underlay  default  swLeaf01         L2   Ethernet1          P2P               UP    29          1F
+Underlay  default  swLeaf02         L2   Ethernet2          P2P               UP    23          18
+Underlay  default  swLeaf03         L2   Ethernet3          P2P               UP    23          13
+Underlay  default  swLeaf04         L2   Ethernet4          P2P               UP    22          10
+Underlay  default  swBorderLeaf01   L2   Ethernet5          P2P               UP    22          1B
 ```
 
 и полученные маршруты:
 ```
-swSpine01#show ip route isis
+swSpine01#sh ip route isis
 
 VRF: default
 Source Codes:
@@ -163,13 +158,28 @@ Source Codes:
  I L2     10.1.0.2/32 [115/30]
            via 10.1.2.1, Ethernet1
            via 10.1.2.2, Ethernet2
-           via 10.1.255.1, Ethernet3
+           via 10.1.2.3, Ethernet3
+           via 10.1.2.4, Ethernet4
+           via 10.1.255.1, Ethernet5
+ I L2     10.1.0.3/32 [115/30]
+           via 10.1.2.1, Ethernet1
+           via 10.1.2.2, Ethernet2
+           via 10.1.2.3, Ethernet3
+           via 10.1.2.4, Ethernet4
+           via 10.1.255.1, Ethernet5
+ I L2     10.1.1.1/32 [115/20]
+           via 10.1.2.1, Ethernet1
+           via 10.1.2.2, Ethernet2
  I L2     10.1.2.1/32
            directly connected, Ethernet1
  I L2     10.1.2.2/32
            directly connected, Ethernet2
- I L2     10.1.255.1/32
+ I L2     10.1.2.3/32
            directly connected, Ethernet3
+ I L2     10.1.2.4/32
+           directly connected, Ethernet4
+ I L2     10.1.255.1/32
+           directly connected, Ethernet5
 ```
 
 Проверим сходимость с любым коммутатором фабрики:
@@ -192,7 +202,7 @@ rtt min/avg/max/mdev = 3.286/4.139/6.029/1.045 ms, ipg/ewma 7.237/5.054 ms
 ### Настройка L2-слоя наложенной сети (Overlay)
 Я буду использовать iBGP с ASN:65000 для данного POD'а.
 
-Настройку начну с коммутаторов уровня Spine, которые должны выступать отражателями маршрутов (Route-Reflector):
+Настройку начну с коммутаторов уровня Spine, которые должны выступать отражателями маршрутов (Route-Reflector) в режиме Client для коммутаторов уровня Leaf:
 ```
 router bgp 65000
    router-id 10.1.0.1
@@ -249,7 +259,7 @@ Neighbor            AS Session State AFI/SAFI                AFI/SAFI State   NL
 10.1.255.1       65000 Established   L2VPN EVPN              Negotiated              0          0
 ```
 
-Фабрика готова, хоть при этом ни одного маршрута и не было анонсировано и получено. Осталось настроить сервисные модели.
+Фабрика готова, хоть при этом ни одного маршрута не было анонсировано и получено. Осталось настроить сервисные модели.
 
 Перед применением любой из моделей, на Лифе должен быть описан интерфейс Vxlan1, который привязан к вашему Loopback0.
 ```
@@ -262,7 +272,7 @@ interface Vxlan1
 ### Настройка сервисов EVPN
 
 #### Сервисная модель VLAN-Based
-???
+VLAN-Based (VLAN-Aware Single-Service) — это классическая модель обслуживания EVPN, в которой обеспечивается строгое монопольное соответствие «один VLAN — один широковещательный домен (MAC-VRF) — один сетевой идентификатор VNI». В рамках этой архитектуры для каждого клиентского VLAN на коммутаторе (VTEP) выделяется изолированная таблица коммутации MAC-адресов и уникальный экземпляр BGP EVPN (EVI) со своими независимыми параметрами Route Distinguisher (RD) и Route Target (RT). Данная модель гарантирует абсолютную изоляцию трафика на Layer 2, исключает пересечение адресных пространств между разными VLAN и является стандартом де-факто для построения простых, легко масштабируемых и предсказуемых Enterprise-фабрик, хотя и накладывает ограничения на утилизацию ресурсов Control Plane при оперировании тысячами сервисных VLAN.
 
 ```
 vlan 11
@@ -286,9 +296,9 @@ router bgp 65000
       redistribute learned
 ```
 
-Пока мы ничего не отсылаем.
+Данная конфигурация соответствует всем коммутаторам уровня Leaf, на котороых ткрминируются эти VLAN'ы.
 
-Настроим абонентский порт `rtBorder01` для Сentralized Routing:
+Настроим абонентский порт `rtBorder01` для маршрутизации Сentralized Routing:
 ```
 hostname rtBorder01
 !
@@ -317,7 +327,7 @@ interface GigabitEthernet1.12
  ip address 192.168.12.254 255.255.255.0
 ```
 
-Проверим LLDP
+Проверим работоспособность сервиса обнаружения LLDP:
 ```
 rtBorder01#sh lldp neighbors
 Capability codes:
@@ -330,12 +340,14 @@ swBorderLeaf01.UnderGi1            120        B,R             Ethernet4
 Total entries displayed: 1
 ```
 
+И работу стека IPv6:
 ```
 rtBorder01#sh ipv6 neighbors
 IPv6 Address                              Age Link-layer Addr State Interface
 FE80::6987:6D68:9A6D:4B41                   1 406c.8f4c.42d0  STALE Gi1
 ```
 
+Проверим связанность по Link-local адресам:
 ```
 rtBorder01#ping ipv6 FE80::6987:6D68:9A6D:4B41
 Output Interface: gigabitEthernet1
@@ -346,9 +358,8 @@ Packet sent with a source address of FE80::5200:FF:FE06:0%GigabitEthernet1
 Success rate is 100 percent (5/5), round-trip min/avg/max = 2/4/8 ms
 ```
 
-в текущей конфигурации и топологии Leaf не будет отдавать другие EVPN-маршруты (Type 2 или Type 5) в сторону Spine, так как VxLAN настроен только на одном коммутаторе.Однако он будет анонсировать сам факт установления сессии и пустые UPDATE (или технические BGP-сообщения), но реальных сетевых префиксов абонента в EVPN другие коммутаторы не увидят.
-
-Начнем с настройки swLeaf04. Будем настраивать только 1 стык Ethernet4 - Gi2. VRF!!!
+Далее, настроим абонентские подключения на всех хостах со вторых линков.
+Я начнал с настройки swLeaf04:
 ```
 hostname srvHost03
 !
@@ -385,7 +396,9 @@ interface GigabitEthernet2.12
  ip address 192.168.12.3 255.255.255.0
 ```
 
-Теперь попробуем Сentralized Routing пингануть себя же через роутер на палке:
+Следует отметить, что на роутере я передаю VLAN в отдельный IP-VRF чтобы разорвать связанность на уровне хоста.
+
+После настройки можно проверить маршрутизацию по модели `Сentralized Routing` пинганув себя же через роутер на палке (rtBorder01):
 
 ```
 srvHost03#ping vrf vrfVLAN-BUNDLE01 192.168.12.3
@@ -395,13 +408,14 @@ Sending 5, 100-byte ICMP Echos to 192.168.12.3, timeout is 2 seconds:
 Success rate is 100 percent (5/5), round-trip min/avg/max = 31/41/51 ms
 ```
 
-Ниже
+Один из ответных пакетов изображен ниже:
 
 ![alt text](ICMPReply01.png)
 
-Произведем просмотр:
+Произведем всестороннюю дефектовку работоспособности данной сервисной модели.
 
-
+Наличие MAC адресов обоих точек терминирования rtBorder01 и srvHost03:
+```
 swLeaf04#show mac address-table
           Mac Address Table
 ------------------------------------------------------------------
@@ -420,19 +434,10 @@ Total Mac Addresses for this criterion: 4
 Vlan    Mac Address       Type        Ports
 ----    -----------       ----        -----
 Total Mac Addresses for this criterion: 0
+```
 
-
-
-swLeaf04#show bgp evpn summary
-BGP summary information for VRF default
-Router identifier 10.1.2.4, local AS number 65000
-Neighbor Status Codes: m - Under maintenance
-  Neighbor V AS           MsgRcvd   MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
-  10.1.0.1 4 65000           1004      1007    0    0 02:23:17 Estab   4      4
-  10.1.0.2 4 65000           1002      1009    0    0 01:42:57 Estab   4      4
-  10.1.0.3 4 65000           1002      1001    0    0 14:07:16 Estab   4      4
-
-
+Состояние туннелей VTEP:
+```
 swLeaf04#show vxlan vtep
 Remote VTEPS for Vxlan1:
 
@@ -441,8 +446,10 @@ VTEP             Tunnel Type(s)
 10.1.255.1       unicast, flood
 
 Total number of remote VTEPS:  1
+```
 
-
+и VNI:
+```
 swLeaf04#show vxlan vni
 VNI to VLAN Mapping for Vxlan1
 VNI         VLAN       Source       Interface       802.1Q Tag
@@ -455,8 +462,10 @@ VNI         VLAN       Source       Interface       802.1Q Tag
 VNI to dynamic VLAN Mapping for Vxlan1
 VNI       VLAN       VRF       Source
 --------- ---------- --------- ------------
+```
 
-
+Экземпляры BGP EVPN:
+```
 swLeaf04#show bgp evpn instance
 EVPN instance: VLAN 11
   Route distinguisher: 10.1.2.4:11
@@ -474,8 +483,10 @@ EVPN instance: VLAN 12
   Local VXLAN IP address: 10.1.2.4
   VXLAN: enabled
   MPLS: disabled
+```
 
-
+И, наконец, просмотрим маршруты типа 2:
+```
 swLeaf04#show bgp evpn route-type mac-ip
 BGP routing table information for VRF default
 Router identifier 10.1.2.4, local AS number 65000
@@ -501,8 +512,10 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
                                  -                     -       -       0       i
  * >      RD: 10.1.2.4:12 mac-ip 5000.000c.0001
                                  -                     -       -       0       i
+```
 
-
+и типа 3:
+```
 swLeaf04#show bgp evpn route-type imet
 BGP routing table information for VRF default
 Router identifier 10.1.2.4, local AS number 65000
@@ -528,6 +541,9 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
                                  10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
  *  ec    RD: 10.1.255.1:12 imet 10.1.255.1
                                  10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+```
+
+Учитывая сложную конфигурацию абонентских подключений в лабораторной, 
 
 
 
