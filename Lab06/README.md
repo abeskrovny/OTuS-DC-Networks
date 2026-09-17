@@ -603,6 +603,9 @@ interface GigabitEthernet2.22
  encapsulation dot1Q 22
  vrf forwarding vrfVLAN-AWARE02
  ip address 192.168.22.3 255.255.255.0
+!
+ip route vrf vrfVLAN-AWARE01 0.0.0.0 0.0.0.0 192.168.21.254
+ip route vrf vrfVLAN-AWARE02 0.0.0.0 0.0.0.0 192.168.22.254
 ```
 
 Проверим состояние таблицы MAC-адресов:
@@ -688,7 +691,102 @@ Success rate is 100 percent (5/5), round-trip min/avg/max = 72/112/216 ms
 
 Как видно, и эта сервисная модель работает.
 
-### Настройка L3VPN
+### Настройка EVPN L3
+Ранее была проверена маршрутизиция по схеме Сentralized Routing.
+
+Сейчас оставим на роутере `rtBorder01` маршрутизацию между VLAN 11 и 12, а маршрутизацию между парами VLAN'ов 11 и 21, а также 12 и 22 будем произведить локально на коммутаторах уровня Leaf. Для этого удалим следующие интерфейсы:
+```
+no interface gigabitEthernet 1.21
+no interface gigabitEthernet 1.22
+```
+
+Перед настройкой любой из моделей на каждом коммутаторе Leaf, вовлеченном в L3 EVPN, должна быть включена глобальная виртуальная адресация: одинаковый Virtual MAC на всю фабрику. Этот адрес будет отвечать на ARP-запросы от всех абонентов во всех VLAN на всех Leaf-коммутаторах.
+
+Задавать нужно любой свободный unicast MAC-адрес, кроме зарезервированных, но на практике в индустрии принято использовать диапазон, официально выделенный компании, на которой построена фабрика. 
+
+Рекомендации по выбору адреса со стороны Arista: использовать шаблон 00:1c:73:xx:xx:xx (где 00:1c:73 — это зарегистрированный OUI компании Arista [1]). Последние три байта можно заполнить произвольно. Главное правило: этот MAC-адрес должен быть строго одинаковым на всех Leaf-коммутаторах фабрики. Именно одинаковый MAC позволяет клиенту (например, роутеру rtBorder01) при миграции или переключении на другой Leaf не обновлять свою ARP-таблицу и продолжать передачу трафика без потерь. 
+
+Что нельзя использовать: реальные физические MAC-адреса интерфейсов коммутаторов или серверов, а также multicast/broadcast адреса (начинающиеся с нечетного числа в первом байте, например 01:xx:xx...).
+
+Таким образом, выберем следующий Virtual MAC, где последний три байта соответствуют номеру POD'а:
+```
+ip virtual-router mac-address 00:1c:73:00:00:01
+```
+
+#### Asymmetric IRB
+Asymmetric IRB (Asymmetrical Integrated Routing and Bridging) — это архитектурная модель маршрутизации в фабриках EVPN VXLAN, при которой локальный VTEP-коммутатор выполняет как L2-коммутацию, так и L3-маршрутизацию (Inter-VLAN) на входе для входящего трафика, отправляя его в сторону назначения через сервисный L2 VNI сети получателя, тогда как обратный трафик возвращается через другой L2 VNI, что требует обязательного наличия и синхронизации всех клиентских VLAN, SVI-интерфейсов и таблиц ARP/MAC на каждом VTEP-коммутаторе в фабрике.
+
+Для настройки Asymmetric IRB необходимо внести следующие изменения на вовлеченных коммутаторах уровня Leaf. Во-первых, необходимо изолировать пользовательский трафик от наложенной сети фабрики, для чего необходимо создать соответствующий IP-VRF и терминировать в нем нужные VLAN:
+```
+vrf instance vrfASYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Tenant01 (Asymmetric IRB)
+!
+ip routing vrf vrfASYM-IRB01
+!
+interface Vlan11
+   description --- Virtual (VLAN011:VLAN-BASED01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.11.253/24
+!
+interface Vlan21
+   description --- Virtual (VLAN021:VLAN-AWARE01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.21.253/24
+```
+
+```
+no ip route vrf vrfVLAN-BUNDLE01 0.0.0.0 0.0.0.0 192.168.11.254
+ip route vrf vrfVLAN-BUNDLE01 0.0.0.0 0.0.0.0 192.168.11.253
+no ip route vrf vrfVLAN-AWARE01 0.0.0.0 0.0.0.0 192.168.21.254
+ip route vrf vrfVLAN-AWARE01 0.0.0.0 0.0.0.0 192.168.21.253
+```
+
+```
+srvHost03#ping vrf vrfVLAN-BUNDLE01 192.168.21.3
+*Sep 17 15:49:37.821: %SYS-5-CONFIG_I: Configured from console by console
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.21.3, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 8/10/15 ms
+
+srvHost03#ping vrf vrfVLAN-BUNDLE01 192.168.11.254
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.254, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 29/55/78 ms
+
+srvHost03#ping vrf vrfVLAN-BUNDLE02 192.168.11.254
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.254, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 67/87/141 ms
+```
+
+![alt text](ICMPReply02.png)
+
+
+
+
+
+
+и терминировать соответствующую пару VLAN'ов:
+```
+
+```
+
+
+
+
+
+
+
+Теперь для
+
+
+Д
+
+
+Для этого на всех вовлеченных в L3 EVPN обмен коммутаторах настроим 
 
 
 
