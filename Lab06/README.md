@@ -724,12 +724,12 @@ ip virtual-router mac-address 00:1c:73:00:00:01
 #### Asymmetric IRB
 Asymmetric IRB (Asymmetrical Integrated Routing and Bridging) — это архитектурная модель маршрутизации в фабриках EVPN VXLAN, при которой локальный VTEP-коммутатор выполняет как L2-коммутацию, так и L3-маршрутизацию (Inter-VLAN) на входе для входящего трафика, отправляя его в сторону назначения через сервисный L2 VNI сети получателя, тогда как обратный трафик возвращается через другой L2 VNI, что требует обязательного наличия и синхронизации всех клиентских VLAN, SVI-интерфейсов и таблиц ARP/MAC на каждом VTEP-коммутаторе в фабрике.
 
-Для настройки Asymmetric IRB необходимо внести следующие изменения на вовлеченных коммутаторах уровня Leaf. Во-первых, необходимо изолировать пользовательский трафик от наложенной сети фабрики, для чего необходимо создать соответствующий IP-VRF и терминировать в нем нужные VLAN:
+Для настройки Asymmetric IRB необходимо внести следующие изменения на вовлеченных коммутаторах уровня Leaf. Во-первых, необходимо изолировать пользовательский трафик от наложенной сети фабрики, для чего необходимо создать соответствующий IP-VRF и терминировать в нем нужные нам VLAN'ы:
 ```
 vrf instance vrfASYM-IRB01
    description --- VRF: RIB for Overlay Data-Plane of Tenant01 (Asymmetric IRB)
 !
-ip routing vrf vrfASYM-IRB01
+ip routing vrf vrfASYM-IRB01      ! Включаем маршрутизацию в VRF
 !
 interface Vlan11
    description --- Virtual (VLAN011:VLAN-BASED01, VRF:vrfASYM-IRB01): L3 termination point
@@ -742,6 +742,7 @@ interface Vlan21
    ip address 192.168.21.253/24
 ```
 
+На хосте-роутере `srvHost03` переписываем DG:
 ```
 no ip route vrf vrfVLAN-BUNDLE01 0.0.0.0 0.0.0.0 192.168.11.254
 ip route vrf vrfVLAN-BUNDLE01 0.0.0.0 0.0.0.0 192.168.11.253
@@ -749,9 +750,9 @@ no ip route vrf vrfVLAN-AWARE01 0.0.0.0 0.0.0.0 192.168.21.254
 ip route vrf vrfVLAN-AWARE01 0.0.0.0 0.0.0.0 192.168.21.253
 ```
 
+После этого можно проверить связанность:
 ```
 srvHost03#ping vrf vrfVLAN-BUNDLE01 192.168.21.3
-*Sep 17 15:49:37.821: %SYS-5-CONFIG_I: Configured from console by console
 Type escape sequence to abort.
 Sending 5, 100-byte ICMP Echos to 192.168.21.3, timeout is 2 seconds:
 !!!!!
@@ -770,9 +771,11 @@ Sending 5, 100-byte ICMP Echos to 192.168.11.254, timeout is 2 seconds:
 Success rate is 100 percent (5/5), round-trip min/avg/max = 67/87/141 ms
 ```
 
-![alt text](ICMPReply02.png)
+Один из пакетов, перехваченных на swLeaf04:
 
+![ICMP Reply](ICMPReply02.png)
 
+#### Symmetric IRB
 
 
 
