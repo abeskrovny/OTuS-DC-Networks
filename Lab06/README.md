@@ -7,6 +7,11 @@
 - [Настройка L2-слоя наложенной сети (Overlay)](#настройка-l2-слоя-наложенной-сети-overlay)
 - [Настройка сервисов EVPN](#настройка-сервисов-evpn)
   - [Cервисная модель VLAN-Based](#сервисная-модель-vlan-based)
+  - [Сервисная модель VLAN-Bundle](#сервисная-модель-vlan-bundle)
+  - [Сервисная модель VLAN-Aware Bundle](#сервисная-модель-vlan-aware-bundle)
+- [Настройка EVPN L3](#настройка-evpn-l3)
+  - [Asymmetric IRB](#asymmetric-irb)
+  - [Symmetric IRB](#symmetric-irb)
 
 ### Условие задачи
 В этой самостоятельной работе мы ожидаем, что вы самостоятельно:
@@ -753,11 +758,11 @@ interface Vlan21
 
 Уникальный IP-адрес на SVI-интерфейсе коммутатора (`interface VLANxx`) критически необходим для корректной работы Control Plane самого Leaf и функционирования инфраструктуры, даже если хосты обращаются только к Anycast-шлюзу (задаваемого директивой `ip virtual-router address`). Согласно стандартам RFC и логике работы стека TCP/IP, виртуальный IP-адрес Anycast Gateway не может существовать «в воздухе». Коммутатору необходим полноценный физический IP-адрес в этом L2-домене для инициализации интерфейса и привязки к нему первичной подсети (Primary Subnet).
 
-На хосте-роутере `srvHost03` переписываем DG:
+На хосте-роутере `srvHost03` переписываем DG для всех VRF на соответствующий эникаст адрес:
 ```
-no ip route vrf vrfVLAN-AWARE01 0.0.0.0 0.0.0.0 192.168.21.254
+ip route vrf vrfVLAN-BUNDLE01 0.0.0.0 0.0.0.0 192.168.11.253
+ip route vrf vrfVLAN-BUNDLE02 0.0.0.0 0.0.0.0 192.168.12.253
 ip route vrf vrfVLAN-AWARE01 0.0.0.0 0.0.0.0 192.168.21.253
-no ip route vrf vrfVLAN-AWARE02 0.0.0.0 0.0.0.0 192.168.22.254
 ip route vrf vrfVLAN-AWARE02 0.0.0.0 0.0.0.0 192.168.22.253
 ```
 
@@ -851,7 +856,7 @@ vlan 4001               ! VLAN для транзитного L3-транспор
    name L3VNI01
 !
 interface vlan 4001
-   description --- Virtual (VLAN:L3VNI01, VRF:vrfL3VNI01): L3 transport interface
+   description --- Virtual (VLAN:L3VNI01, vrfSYM-IRB01): L3 transport interface
    vrf vrfSYM-IRB01
 !
 interface Vxlan1
@@ -904,106 +909,57 @@ VNI         VLAN       VRF                Source
 14001       4097       vrfSYM-IRB01       evpn
 ```
 
-И проверим состояние RIB во всех VRF'ах:
+Однако, есть одна проблемка:
 ```
-swBorderLeaf01#show ip route vrf all
-
-VRF: default
-Source Codes:
-       C - connected, S - static, K - kernel,
-       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
-       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
-       N2 - OSPF NSSA external type2, B - Other BGP Routes,
-       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
-       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
-       A O - OSPF Summary, NG - Nexthop Group Static Route,
-       V - VXLAN Control Service, M - Martian,
-       DH - DHCP client installed default route,
-       DP - Dynamic Policy Route, L - VRF Leaked,
-       G  - gRIBI, RC - Route Cache Route,
-       CL - CBF Leaked Route
-
-Gateway of last resort is not set
-
- I L2     10.1.0.1/32
-           directly connected, Ethernet1
- I L2     10.1.0.2/32
-           directly connected, Ethernet2
- I L2     10.1.0.3/32
-           directly connected, Ethernet3
- I L2     10.1.1.1/32 [115/30]
-           via 10.1.0.1, Ethernet1
-           via 10.1.0.2, Ethernet2
-           via 10.1.0.3, Ethernet3
- I L2     10.1.2.1/32 [115/30]
-           via 10.1.0.1, Ethernet1
-           via 10.1.0.2, Ethernet2
-           via 10.1.0.3, Ethernet3
- I L2     10.1.2.2/32 [115/30]
-           via 10.1.0.1, Ethernet1
-           via 10.1.0.2, Ethernet2
-           via 10.1.0.3, Ethernet3
- I L2     10.1.2.3/32 [115/30]
-           via 10.1.0.1, Ethernet1
-           via 10.1.0.2, Ethernet2
-           via 10.1.0.3, Ethernet3
- I L2     10.1.2.4/32 [115/30]
-           via 10.1.0.1, Ethernet1
-           via 10.1.0.2, Ethernet2
-           via 10.1.0.3, Ethernet3
- C        10.1.255.1/32
-           directly connected, Loopback0
-
-
-VRF: vrfASYM-IRB01
-Source Codes:
-       C - connected, S - static, K - kernel,
-       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
-       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
-       N2 - OSPF NSSA external type2, B - Other BGP Routes,
-       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
-       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
-       A O - OSPF Summary, NG - Nexthop Group Static Route,
-       V - VXLAN Control Service, M - Martian,
-       DH - DHCP client installed default route,
-       DP - Dynamic Policy Route, L - VRF Leaked,
-       G  - gRIBI, RC - Route Cache Route,
-       CL - CBF Leaked Route
-
-Gateway of last resort is not set
-
- C        192.168.11.0/24
-           directly connected, Vlan11
- C        192.168.21.0/24
-           directly connected, Vlan21
-
-
-VRF: vrfSYM-IRB01
-Source Codes:
-       C - connected, S - static, K - kernel,
-       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
-       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
-       N2 - OSPF NSSA external type2, B - Other BGP Routes,
-       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
-       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
-       A O - OSPF Summary, NG - Nexthop Group Static Route,
-       V - VXLAN Control Service, M - Martian,
-       DH - DHCP client installed default route,
-       DP - Dynamic Policy Route, L - VRF Leaked,
-       G  - gRIBI, RC - Route Cache Route,
-       CL - CBF Leaked Route
-
-Gateway of last resort is not set
-
- C        192.168.12.0/24
-           directly connected, Vlan12
- C        192.168.22.0/24
-           directly connected, Vlan22
+swLeaf04#sh ip interface brief
+                                                                        Address
+Interface     IP Address           Status    Protocol             MTU   Owner
+------------- -------------------- --------- ----------------- -------- -------
+Ethernet1     10.1.2.4/32          up        up                  9000   Lo0
+Ethernet2     10.1.2.4/32          up        up                  9000   Lo0
+Ethernet3     10.1.2.4/32          up        up                  9000   Lo0
+Loopback0     10.1.2.4/32          up        up                 65535
+Management1   unassigned           up        up                  1500
+Vlan11        192.168.11.204/24    up        up                  1500
+Vlan12        192.168.12.204/24    up        up                  1500
+Vlan21        192.168.21.204/24    up        up                  1500
+Vlan22        192.168.22.204/24    up        up                  1500
+Vlan4001      unassigned           down      lowerlayerdown      1500
+Vlan4097      unassigned           up        up                  9164
 ```
 
-Все замечательно.
+Здесь интерфейс VLAN'а через который должен форвардиться L3-трафик находится в состоянии `down` (`lowerlayerdown`).
 
-Теперь между этими парами VLAN'ов необходимо поднять маршрутизацию, которая будет осуществляться методом Centralized Routing через роутер `rtBorder01`. Я буду использовать OSPF:
+В Arista EOS интерфейс SVI (`interface VlanXXXX`) автоматически переходит в статус `down` (`lowerlayerdown`), если в этом VLAN нет ни одного активного порта. Так как этот VLAN транзитный и используется только внутри фабрики, к нему не подключены реальные хосты. Поэтому необходимо его искуственно "поднять":
+```
+interface Vlan4001
+   no autostate
+```
+
+После чего он поднимется:
+```
+swBorderLeaf01#sh ip interface brief
+                                                                        Address
+Interface       IP Address            Status     Protocol         MTU   Owner
+--------------- --------------------- ---------- ------------ --------- -------
+Ethernet1       10.1.255.1/32         up         up              9000   Lo0
+Ethernet2       10.1.255.1/32         up         up              9000   Lo0
+Ethernet3       10.1.255.1/32         up         up              9000   Lo0
+Loopback0       10.1.255.1/32         up         up             65535
+Management1     unassigned            up         up              1500
+Vlan11          192.168.11.250/24     up         up              1500
+Vlan12          192.168.12.250/24     up         up              1500
+Vlan21          192.168.21.250/24     up         up              1500
+Vlan22          192.168.22.250/24     up         up              1500
+Vlan4001        unassigned            up         up              1500
+Vlan4097        unassigned            up         up              9164
+```
+
+Пойманный пакет говорит о правильном движении трафика:
+
+![ICMP Reply](ICMPReply03.png)
+
+Теперь между этими парами VLAN'ов необходимо поднять маршрутизацию, которая будет осуществляться методом Centralized Routing через роутер `rtBorder01`. Я буду использовать OSPF (`swBorderLeaf01`):
 ```
 interface Vlan11
    ip ospf area 0.0.0.0
@@ -1027,208 +983,273 @@ router ospf 20 vrf vrfSYM-IRB01
    max-lsa 12000
 ```
 
+На `swLeaf04` конфигурация аналогична.
 
-Переходим на роутер:
+Переходим на роутер `rtBorder01` и настраиваем OSPF:
+```
+router ospf 1
+ router-id 10.1.255.254
+ network 192.168.0.0 0.0.255.255 area 0
+ default-information originate always
 ```
 
+После этого проверяем соседство на стороне `swLeaf04`:
+```
+swLeaf04#sh ip ospf neighbor
+Neighbor ID     Instance VRF      Pri State                  Dead Time   Address         Interface
+10.1.11.250     10       vrfASYM-IRB01 1   FULL/DR                00:00:34    192.168.11.250  Vlan11
+10.1.255.254    10       vrfASYM-IRB01 1   FULL/BDR               00:00:36    192.168.11.254  Vlan11
+10.1.11.250     10       vrfASYM-IRB01 1   FULL/DR                00:00:30    192.168.21.250  Vlan21
+10.1.12.250     20       vrfSYM-IRB01 1   FULL/DR                00:00:32    192.168.22.250  Vlan22
+10.1.12.250     20       vrfSYM-IRB01 1   FULL/BDR               00:00:34    192.168.12.250  Vlan12
+10.1.255.254    20       vrfSYM-IRB01 1   FULL/DR                00:00:34    192.168.12.254  Vlan12
 ```
 
+Проверим состояние RIB во всех VRF'ах:
+```
+swLeaf04#sh ip route vrf all
+
+VRF: default
+Source Codes:
+       C - connected, S - static, K - kernel,
+       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
+       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
+       N2 - OSPF NSSA external type2, B - Other BGP Routes,
+       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
+       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
+       A O - OSPF Summary, NG - Nexthop Group Static Route,
+       V - VXLAN Control Service, M - Martian,
+       DH - DHCP client installed default route,
+       DP - Dynamic Policy Route, L - VRF Leaked,
+       G  - gRIBI, RC - Route Cache Route,
+       CL - CBF Leaked Route
+
+Gateway of last resort is not set
+
+ I L2     10.1.0.1/32
+           directly connected, Ethernet2
+ I L2     10.1.0.2/32
+           directly connected, Ethernet1
+ I L2     10.1.0.3/32
+           directly connected, Ethernet3
+ I L2     10.1.1.1/32 [115/30]
+           via 10.1.0.2, Ethernet1
+           via 10.1.0.1, Ethernet2
+           via 10.1.0.3, Ethernet3
+ I L2     10.1.2.1/32 [115/30]
+           via 10.1.0.2, Ethernet1
+           via 10.1.0.1, Ethernet2
+           via 10.1.0.3, Ethernet3
+ I L2     10.1.2.2/32 [115/30]
+           via 10.1.0.2, Ethernet1
+           via 10.1.0.1, Ethernet2
+           via 10.1.0.3, Ethernet3
+ I L2     10.1.2.3/32 [115/30]
+           via 10.1.0.2, Ethernet1
+           via 10.1.0.1, Ethernet2
+           via 10.1.0.3, Ethernet3
+ C        10.1.2.4/32
+           directly connected, Loopback0
+ I L2     10.1.255.1/32 [115/30]
+           via 10.1.0.2, Ethernet1
+           via 10.1.0.1, Ethernet2
+           via 10.1.0.3, Ethernet3
 
 
+VRF: vrfASYM-IRB01
+Source Codes:
+       C - connected, S - static, K - kernel,
+       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
+       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
+       N2 - OSPF NSSA external type2, B - Other BGP Routes,
+       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
+       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
+       A O - OSPF Summary, NG - Nexthop Group Static Route,
+       V - VXLAN Control Service, M - Martian,
+       DH - DHCP client installed default route,
+       DP - Dynamic Policy Route, L - VRF Leaked,
+       G  - gRIBI, RC - Route Cache Route,
+       CL - CBF Leaked Route
+
+Gateway of last resort:
+ O E2     0.0.0.0/0 [110/1]
+           via 192.168.11.254, Vlan11
+
+ C        192.168.11.0/24
+           directly connected, Vlan11
+ O        192.168.12.0/24 [110/11]
+           via 192.168.11.254, Vlan11
+ C        192.168.21.0/24
+           directly connected, Vlan21
+ O        192.168.22.0/24 [110/21]
+           via 192.168.11.254, Vlan11
 
 
+VRF: vrfSYM-IRB01
+Source Codes:
+       C - connected, S - static, K - kernel,
+       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
+       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
+       N2 - OSPF NSSA external type2, B - Other BGP Routes,
+       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
+       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
+       A O - OSPF Summary, NG - Nexthop Group Static Route,
+       V - VXLAN Control Service, M - Martian,
+       DH - DHCP client installed default route,
+       DP - Dynamic Policy Route, L - VRF Leaked,
+       G  - gRIBI, RC - Route Cache Route,
+       CL - CBF Leaked Route
 
+Gateway of last resort:
+ O E2     0.0.0.0/0 [110/1]
+           via 192.168.12.254, Vlan12
 
+ O        192.168.11.0/24 [110/11]
+           via 192.168.12.254, Vlan12
+ B I      192.168.12.254/32 [200/0]
+           via VTEP 10.1.255.1 VNI 14001 router-mac 50:00:00:15:f4:e8 local-interface Vxlan1
+ C        192.168.12.0/24
+           directly connected, Vlan12
+ O        192.168.21.0/24 [110/21]
+           via 192.168.12.254, Vlan12
+ C        192.168.22.0/24
+           directly connected, Vlan22
+```
 
-
+Как видно, связанность мы получили. Проверим ее со стороны роутера `rtBorder01`:
+```
 rtBorder01#ping 192.168.11.3
 Type escape sequence to abort.
 Sending 5, 100-byte ICMP Echos to 192.168.11.3, timeout is 2 seconds:
 !!!!!
 Success rate is 100 percent (5/5), round-trip min/avg/max = 41/54/65 ms
+
 rtBorder01#ping 192.168.12.3
 Type escape sequence to abort.
 Sending 5, 100-byte ICMP Echos to 192.168.12.3, timeout is 2 seconds:
 !!!!!
 Success rate is 100 percent (5/5), round-trip min/avg/max = 50/54/61 ms
+
 rtBorder01#ping 192.168.21.3
 Type escape sequence to abort.
 Sending 5, 100-byte ICMP Echos to 192.168.21.3, timeout is 2 seconds:
 !!!!!
 Success rate is 100 percent (5/5), round-trip min/avg/max = 71/106/227 ms
+
 rtBorder01#ping 192.168.22.3
 Type escape sequence to abort.
 Sending 5, 100-byte ICMP Echos to 192.168.22.3, timeout is 2 seconds:
 !!!!!
 Success rate is 100 percent (5/5), round-trip min/avg/max = 29/35/43 ms
-
-
-
-
-
-
-
-
-
-
-
-```
-srvHost03#ping vrf vrfVLAN-BUNDLE02 192.168.12.254
-Type escape sequence to abort.
-Sending 5, 100-byte ICMP Echos to 192.168.12.254, timeout is 2 seconds:
-!!!!!
-Success rate is 100 percent (5/5), round-trip min/avg/max = 52/75/110 ms
 ```
 
-
-
-
-
-
-
-
-Создаем VLAN для транзитного трафика:
+Проверим состояние интерфейса `vxlan`:
 ```
-vlan 4001
-   name L3VNI01
+swLeaf04#show interfaces vxlan 1
+Vxlan1 is up, line protocol is up (connected)
+  Hardware is Vxlan
+  Description: --- VxLAN (no VRF): interface for Overlay Control-Plane
+  Source interface is Loopback0 and is active with 10.1.2.4
+  Listening on UDP port 4789
+  Replication/Flood Mode is headend with Flood List Source: EVPN
+  Remote MAC learning via EVPN
+  VNI mapping to VLANs
+  Static VLAN to VNI mapping is
+    [11, 10011]       [12, 10012]       [21, 10021]       [22, 10022]
 
-interface vlan 4001
-   description --- Virtual (VLAN:L3VNI01, VRF:vrfL3VNI01): L3 transport interface
-   vrf vrfL3VNI01
-```
-
-Далее, примапим его к интерфейсу Data Plane оверлея:
-```
-interface Vxlan1
-   vxlan vrf vrfL3VNI01 vni 14001
-```
-
-
-
-```
-ip routing vrf vrfL3VNI01
-
-router bgp 65000 ?????????
-   !
-   vrf PROD
-      rd 10.1.255.1:50001
-      route-target import evpn 50001:50001
-      route-target export evpn 50001:50001
+  Dynamic VLAN to VNI mapping for 'evpn' is
+    [4097, 14001]
+  Note: All Dynamic VLANs used by VCS are internal VLANs.
+        Use 'show vxlan vni' for details.
+  Static VRF to VNI mapping is
+   [vrfSYM-IRB01, 14001]
+  Headend replication flood vtep list is:
+    11 10.1.255.1
+    12 10.1.255.1
+    21 10.1.255.1
+    22 10.1.255.1
+  Shared Router MAC is 0000.0000.0000
 ```
 
+И таблицу VNI:
+```
+  swLeaf04#show vxlan vni
+VNI to VLAN Mapping for Vxlan1
+VNI         VLAN       Source       Interface       802.1Q Tag
+----------- ---------- ------------ --------------- ----------
+10011       11         static       Ethernet4       11
+                                    Vxlan1          11
+10012       12         static       Ethernet4       12
+                                    Vxlan1          12
+10021       21         static       Ethernet4       21
+                                    Vxlan1          21
+10022       22         static       Ethernet4       22
+                                    Vxlan1          22
+
+VNI to dynamic VLAN Mapping for Vxlan1
+VNI         VLAN       VRF                Source
+----------- ---------- ------------------ ------------
+14001       4097       vrfSYM-IRB01       evpn
 ```
 
+Напоследок, таблицу маршрутов 2-го типа:
+```
+swLeaf04#sh bgp evpn route-type mac-ip
+BGP routing table information for VRF default
+Router identifier 10.1.2.4, local AS number 65000
+Route status codes: * - valid, > - active, S - Stale, E - ECMP head, e - ECMP
+                    c - Contributing to ECMP, % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
 
+          Network                Next Hop              Metric  LocPref Weight  Path
+ * >Ec    RD: 10.1.255.1:11 mac-ip 5000.0006.0000
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.255.1:11 mac-ip 5000.0006.0000
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+ *  ec    RD: 10.1.255.1:11 mac-ip 5000.0006.0000
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
+ * >Ec    RD: 10.1.255.1:12 mac-ip 5000.0006.0000
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.255.1:12 mac-ip 5000.0006.0000
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+ *  ec    RD: 10.1.255.1:12 mac-ip 5000.0006.0000
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
+ * >Ec    RD: 10.1.255.1:11 mac-ip 5000.0006.0000 192.168.11.254
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.255.1:11 mac-ip 5000.0006.0000 192.168.11.254
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+ *  ec    RD: 10.1.255.1:11 mac-ip 5000.0006.0000 192.168.11.254
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
+ * >Ec    RD: 10.1.255.1:12 mac-ip 5000.0006.0000 192.168.12.254
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.255.1:12 mac-ip 5000.0006.0000 192.168.12.254
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+ *  ec    RD: 10.1.255.1:12 mac-ip 5000.0006.0000 192.168.12.254
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
 ```
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+и 5-го, используемого для реализвции Symmetric IRB:
 ```
-L3VNI
+swLeaf04#sh bgp evpn route-type ip-prefix ipv4
+BGP routing table information for VRF default
+Router identifier 10.1.2.4, local AS number 65000
+Route status codes: * - valid, > - active, S - Stale, E - ECMP head, e - ECMP
+                    c - Contributing to ECMP, % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  LocPref Weight  Path
+ * >      RD: 10.1.255.1:4001 ip-prefix 192.168.12.0/24
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+ *        RD: 10.1.255.1:4001 ip-prefix 192.168.12.0/24
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
+ *        RD: 10.1.255.1:4001 ip-prefix 192.168.12.0/24
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+ * >      RD: 10.1.255.1:4001 ip-prefix 192.168.22.0/24
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+ *        RD: 10.1.255.1:4001 ip-prefix 192.168.22.0/24
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
+ *        RD: 10.1.255.1:4001 ip-prefix 192.168.22.0/24
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
 ```
-
-
-
-Клиентские L2 VNI в BGP EVPN теперь можно упаковать в `vlan-aware-bundle` для красоты.
-
-
-Основа настройки выглядит аналогичной 
-
-
-
-
-
-
-
-!
-vlan 11-12
-!
-vlan 4001                               <-- Транзитный VLAN для VRF PROD
-   name L3_VNI_TRUCK_PROD
-!
-! 2. Маппим и клиентские L2 VNI, и транзитный L3 VNI
-interface Vxlan1
-   vxlan source-interface Loopback0
-   vxlan vlan 11 vni 10011
-   vxlan vlan 12 vni 10012
-   vxlan vrf PROD vni 50001             <-- Привязка L3 VNI к VRF
-!
-! 3. Настройка Anycast Gateway (точно так же, как в Asymmetric)
-interface Vlan11
-   vrf forwarding PROD
-   ip address 10.1.11.2/24
-   ip virtual-router address 10.1.11.1  <-- ANYCAST ШЛЮЗ ХОСТОВ
-!
-interface Vlan12
-   vrf forwarding PROD
-   ip address 10.1.12.2/24
-   ip virtual-router address 10.1.12.1  <-- ANYCAST ШЛЮЗ ХОСТОВ
-!
-! 4. Настройка интерфейса транзитного VLAN (SVI без IP)
-interface Vlan4001
-   vrf forwarding PROD
-   ip routing ipv4                      <-- Включаем маршрутизацию в транзитном VNI
-!
-! 5. Настройка BGP
-router bgp 65000
-   ! Активируем передачу IP-маршрутов (Type-5) внутри VRF
-   address-family l3vpn encapsulation vxlan
-      neighbor grpSPINES activate
-   !
-   vlan-aware-bundle CLIENT-NETS
-      rd auto
-      route-target both auto
-      vlan 11-12
-      redistribute learned
-
-
-
-и терминировать соответствующую пару VLAN'ов:
-```
-
-```
-
-
-
-
-
-
-
-Теперь для
-
-
-Д
-
-
-Для этого на всех вовлеченных в L3 EVPN обмен коммутаторах настроим 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Перед тем, как перейти к настройкам, удалим с "роутера на палке" (rtBorder01) подинтерфейсы `Gi1.11` и `Gi1.12` чтобы 
-
-
-anycast!?
