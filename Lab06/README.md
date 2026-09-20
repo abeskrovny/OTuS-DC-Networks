@@ -807,13 +807,16 @@ Vl11           vrfASYM-IRB01      192.168.11.253          U              active
 Vl21           vrfASYM-IRB01      192.168.21.253          U              active
 ```
 
-
+Проверим наличие MAC-адресов в таблице, связанной с VRF `vrfASYM-IRB01`:
+```
 swLeaf04#sh ip arp vrf vrfASYM-IRB01
 Address         Age (sec)  Hardware Addr   Interface
 192.168.11.3      0:20:37  5000.000c.0001  Vlan11, not learned
 192.168.21.3      0:20:37  5000.000c.0001  Vlan21, not learned
+```
 
-
+Маршруты типа 2:
+```
 swBorderLeaf01#sh bgp evpn route-type mac-ip
 BGP routing table information for VRF default
 Router identifier 10.1.255.1, local AS number 65000
@@ -837,8 +840,7 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
                                  10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.2
  *  ec    RD: 10.1.2.4:11 mac-ip 5000.000c.0001 192.168.11.3
                                  10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.1
-
-
+```
 
 #### Symmetric IRB
 Конфигурация Symmetric IRB является рекомендуемой моделью с точки зрения компании Arista.
@@ -850,12 +852,12 @@ Symmetric IRB (Symmetrical Integrated Routing and Bridging) — это высо�
 vrf instance vrfSYM-IRB01
    description --- VRF: RIB for Overlay Data-Plane of Symmetric IRB
 !
-ip routing vrf vrfSYM-IRB01
+ip routing vrf vrfSYM-IRB01      ! Включаем маршрутизацию в VRF
 !
-vlan 4001               ! VLAN для транзитного L3-транспорта (Symetric IRB)  VLAN
+vlan 4001                        ! VLAN для транзитного L3-транспорта (Symetric IRB)
    name L3VNI01
 !
-interface vlan 4001
+interface vlan 4001              ! VLAN не требуется задавать IP-адрес
    description --- Virtual (VLAN:L3VNI01, vrfSYM-IRB01): L3 transport interface
    vrf vrfSYM-IRB01
 !
@@ -884,11 +886,11 @@ address-family evpn
    neighbor grpSPINES activate
 ```
 
-> Следует отметить следующую деталь: VLAN, предназначенный для транспорта L3-трафика не требует назначения собственного IP-адреса.
+> Следует отметить следующую деталь: VLAN, предназначенный для транспорта L3-трафика не требует назначения собственного IP-адреса на SVI-интерфейсе, так как транзитный VNI работает как виртуальный кабель «точка-точка» между VRF на двух разных Leaf'ах.
 
 Проверим модель IRB.
 
-Убедитесь, что коммутатор корректно связал ваши VLAN и VRF с VXLAN-туннелями:
+Убедимся, что коммутатор корректно связал VLAN и VRF с VXLAN-туннелями:
 ```
 swLeaf04#sh vxlan vni
 VNI to VLAN Mapping for Vxlan1
@@ -1055,7 +1057,6 @@ Gateway of last resort is not set
            via 10.1.0.1, Ethernet2
            via 10.1.0.3, Ethernet3
 
-
 VRF: vrfASYM-IRB01
 Source Codes:
        C - connected, S - static, K - kernel,
@@ -1083,7 +1084,6 @@ Gateway of last resort:
            directly connected, Vlan21
  O        192.168.22.0/24 [110/21]
            via 192.168.11.254, Vlan11
-
 
 VRF: vrfSYM-IRB01
 Source Codes:
