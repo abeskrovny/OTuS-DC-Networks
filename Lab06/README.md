@@ -19,12 +19,16 @@
 
 Для себя ставлю задачу попробовать возможные сервисные модели и режимы работы IRB, поддерживаемые данным виртуальным коммутатором.
 
-В качестве подстилающей сети я выбираю ISIS за его простоту, гибкость и независимость от стека IP. Для In-Band - IPv6 link-local.
+Схема лабораторной сети:
 
 ![Схема сети](scheme2.png)
 
+В качестве подстилающей сети я выбираю ISIS за его простоту, гибкость и независимость от стека IP. Для In-Band - IPv6 link-local.
+
 ### Настройка Underlay (ISIS)
-Первоначально, рассмотрим решение без vPC-пар (M-LAG в терминологии Arista) и Multihoming подключений на коммутаторе `srvHost03`: будем считать рабочим только линк `srvHost03:Gi2 <-> swLeaf04:Ethernet4`. Тогда конфигурация всех коммутаторов фабрики будут сходной:
+Первоначально, рассмотрим решение без vPC-пар (M-LAG в терминологии Arista) и Multihoming подключений на коммутаторе `srvHost03`: будем считать рабочим только линк `srvHost03:Gi2 <-> swLeaf04:Ethernet4`.
+
+Тогда конфигурации всех коммутаторов фабрики будут сходными:
 ```
 hostname swSpine01
 dns domain Underlay.local
@@ -139,7 +143,7 @@ Underlay  default  swLeaf04         L2   Ethernet4          P2P               UP
 Underlay  default  swBorderLeaf01   L2   Ethernet5          P2P               UP    22          1B
 ```
 
-и полученные маршруты:
+и полученные через ISIS маршруты:
 ```
 swSpine01#sh ip route isis
 
@@ -224,7 +228,7 @@ router bgp 65000
 
 > Команда `neighbor grpLEAFS send-community` разрешает коммутатору Arista отправлять стандартные BGP Communities (сообщества) в сторону peer-группы grpLEAFS. По умолчанию в протоколе BGP при отправке маршрутных обновлений (BGP Updates) атрибут `Community` удаляется.
 
-На стороне коммутатора `swBorderLeaf01` конфигурация следующая:
+На стороне коммутаторов уровня Leaf конфигурация следующая:
 ```
 router bgp 65000
    router-id 10.1.255.1
@@ -261,7 +265,7 @@ Neighbor            AS Session State AFI/SAFI                AFI/SAFI State   NL
 
 Фабрика готова, хоть при этом ни одного маршрута не было ни анонсировано и ни получено. Осталось настроить сервисные модели.
 
-Перед применением любой из моделей, на коммутаторе уровня Leaf должен быть описан интерфейс Vxlan1, который привязан к локальной петле Loopback0.
+Перед работой с любой из моделей, на коммутаторе уровня Leaf должен быть описан интерфейс Vxlan1, предназначенный для терминирования туннелей VTEP. На коммутаторах `swBorderLeaf01` и `swLeaf04` привяжем его к локальным петлевым интерфесам Loopback0. Настройку остальных коммутаторов будем производить в контексте соответствующего подключния серверов.
 ```
 interface Vxlan1
    description --- VxLAN (no VRF): interface for Overlay Control-Plane
@@ -274,7 +278,7 @@ interface Vxlan1
 #### Сервисная модель VLAN-Based
 VLAN-Based (VLAN-Aware Single-Service) — это классическая модель обслуживания EVPN, в которой обеспечивается строгое монопольное соответствие «один VLAN — один широковещательный домен (MAC-VRF) — один сетевой идентификатор VNI». В рамках этой архитектуры для каждого клиентского VLAN на коммутаторе (VTEP) выделяется изолированная таблица коммутации MAC-адресов и уникальный экземпляр BGP EVPN (EVI) со своими независимыми параметрами Route Distinguisher (RD) и Route Target (RT). Данная модель гарантирует абсолютную изоляцию трафика на Layer 2, исключает пересечение адресных пространств между разными VLAN и является стандартом де-факто для построения простых, легко масштабируемых и предсказуемых Enterprise-фабрик, хотя и накладывает ограничения на утилизацию ресурсов Control Plane при оперировании тысячами сервисных VLAN.
 
-Начну с коммутатора `swBorderLeaf01`:
+На коммутаторах `swBorderLeaf01` и `swLeaf04` произведем идентичные настройки:
 ```
 vlan 11
    name VLAN-BASED01
@@ -297,8 +301,7 @@ router bgp 65000
       redistribute learned
 ```
 
-Данная конфигурация соответствует всем коммутаторам уровня Leaf, на котороых ткрминируются эти VLAN'ы.
-На данном этапе перенесу аналогичные настройки на `swLeaf04`.
+> Данная конфигурация соответствует всем коммутаторам уровня Leaf, на котороых терминируются данные VLAN'ы. Разница лишь в особенностях абонентского подключения.
 
 Настроим абонентский порт `Gi1` роутера `rtBorder01` для маршрутизации Сentralized Routing:
 ```
@@ -360,7 +363,7 @@ Packet sent with a source address of FE80::5200:FF:FE06:0%GigabitEthernet1
 Success rate is 100 percent (5/5), round-trip min/avg/max = 2/4/8 ms
 ```
 
-Далее, настроим абонентские подключения `srvHost03` к `swLeaf04`.
+Далее, настроим абонентское подключение `srvHost03` к `swLeaf04`. Считаем сейчас, что линк - единственный.
 ```
 hostname srvHost03
 !
@@ -399,7 +402,7 @@ interface GigabitEthernet2.12
 
 Следует отметить, что на роутере-хосте `srvHost03` я передаю VLAN в отдельный IP-VRF чтобы разорвать связанность на уровне самого хоста.
 
-После настройки можно проверить маршрутизацию по модели Сentralized Routing пинганув себя же через роутер "на палке" (`rtBorder01`):
+После настройки можно проверить маршрутизацию по модели Сentralized Routing пинганув себя же через "роутер на палке" (`rtBorder01`):
 
 ```
 srvHost03#ping vrf vrfVLAN-BUNDLE01 192.168.12.3
@@ -688,7 +691,7 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
                                  10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.1
 ```                        
 
-И проверим связанность с другим VRF через роутер "на палке":
+И проверим связанность с другим VRF через "роутер на палке":
 ```
 srvHost03#ping vrf vrfVLAN-BUNDLE01 192.168.21.3
 Type escape sequence to abort.
@@ -724,30 +727,38 @@ ip virtual-router mac-address 00:1c:73:00:00:01
 #### Asymmetric IRB
 Asymmetric IRB (Asymmetrical Integrated Routing and Bridging) — это архитектурная модель маршрутизации в фабриках EVPN VXLAN, при которой локальный VTEP-коммутатор выполняет как L2-коммутацию, так и L3-маршрутизацию (Inter-VLAN) на входе для входящего трафика, отправляя его в сторону назначения через сервисный L2 VNI сети получателя, тогда как обратный трафик возвращается через другой L2 VNI, что требует обязательного наличия и синхронизации всех клиентских VLAN, SVI-интерфейсов и таблиц ARP/MAC на каждом VTEP-коммутаторе в фабрике.
 
+В модели Asymmetric IRB на Arista EOS маршрутизация между подсетями происходит на входящем VTEP (Ingress), а коммутация в целевую подсеть — на исходящем VTEP (Egress).
+
+Главная особенность асимметричного подхода: L3 VNI не используется, но при этом все VLAN и SVI (интерфейсы маршрутизации) должны быть настроены на абсолютно всех VTEP-коммутаторахфабрики, где живут данные подсети.
+
 Для настройки Asymmetric IRB необходимо внести следующие изменения на вовлеченных коммутаторах уровня Leaf. Во-первых, необходимо изолировать пользовательский трафик от наложенной сети фабрики, для чего необходимо создать соответствующий IP-VRF и терминировать в нем нужные нам VLAN'ы:
 ```
 vrf instance vrfASYM-IRB01
-   description --- VRF: RIB for Overlay Data-Plane of Tenant01 (Asymmetric IRB)
+   description --- VRF: RIB for Overlay Data-Plane of Asymmetric IRB
 !
 ip routing vrf vrfASYM-IRB01      ! Включаем маршрутизацию в VRF
 !
 interface Vlan11
    description --- Virtual (VLAN011:VLAN-BASED01, VRF:vrfASYM-IRB01): L3 termination point
    vrf vrfASYM-IRB01
-   ip address 192.168.11.253/24
+   ip address 192.168.11.204/24               ! Уникальный адрес Leaf'а
+   ip virtual-router address 192.168.11.253   ! Общий для фабрики Anycast GW
 !
 interface Vlan21
    description --- Virtual (VLAN021:VLAN-AWARE01, VRF:vrfASYM-IRB01): L3 termination point
    vrf vrfASYM-IRB01
-   ip address 192.168.21.253/24
+   ip address 192.168.21.204/24               ! Уникальный адрес Leaf'а
+   ip virtual-router address 192.168.21.253   ! Общий для фабрики Anycast GW
 ```
+
+Уникальный IP-адрес на SVI-интерфейсе коммутатора (`interface VLANxx`) критически необходим для корректной работы Control Plane самого Leaf и функционирования инфраструктуры, даже если хосты обращаются только к Anycast-шлюзу (задаваемого директивой `ip virtual-router address`). Согласно стандартам RFC и логике работы стека TCP/IP, виртуальный IP-адрес Anycast Gateway не может существовать «в воздухе». Коммутатору необходим полноценный физический IP-адрес в этом L2-домене для инициализации интерфейса и привязки к нему первичной подсети (Primary Subnet).
 
 На хосте-роутере `srvHost03` переписываем DG:
 ```
-no ip route vrf vrfVLAN-BUNDLE01 0.0.0.0 0.0.0.0 192.168.11.254
-ip route vrf vrfVLAN-BUNDLE01 0.0.0.0 0.0.0.0 192.168.11.253
 no ip route vrf vrfVLAN-AWARE01 0.0.0.0 0.0.0.0 192.168.21.254
 ip route vrf vrfVLAN-AWARE01 0.0.0.0 0.0.0.0 192.168.21.253
+no ip route vrf vrfVLAN-AWARE02 0.0.0.0 0.0.0.0 192.168.22.254
+ip route vrf vrfVLAN-AWARE02 0.0.0.0 0.0.0.0 192.168.22.253
 ```
 
 После этого можно проверить связанность:
@@ -775,8 +786,411 @@ Success rate is 100 percent (5/5), round-trip min/avg/max = 67/87/141 ms
 
 ![ICMP Reply](ICMPReply02.png)
 
-#### Symmetric IRB
+Проверяем:
+```
+swLeaf04#show ip virtual-router vrf vrfASYM-IRB01
+IP virtual router is configured with MAC address: 001c.7300.0001
+IP virtual router address subnet routes not enabled
+MAC address advertisement interval: 30 seconds
 
+Protocol: U - Up, D - Down, T - Testing, UN - Unknown
+          NP - Not Present, LLD - Lower Layer Down
+
+Interface      Vrf                Virtual IP Address      Protocol       State
+-------------- ------------------ ----------------------- -------------- ------
+Vl11           vrfASYM-IRB01      192.168.11.253          U              active
+Vl21           vrfASYM-IRB01      192.168.21.253          U              active
+```
+
+
+swLeaf04#sh ip arp vrf vrfASYM-IRB01
+Address         Age (sec)  Hardware Addr   Interface
+192.168.11.3      0:20:37  5000.000c.0001  Vlan11, not learned
+192.168.21.3      0:20:37  5000.000c.0001  Vlan21, not learned
+
+
+swBorderLeaf01#sh bgp evpn route-type mac-ip
+BGP routing table information for VRF default
+Router identifier 10.1.255.1, local AS number 65000
+Route status codes: * - valid, > - active, S - Stale, E - ECMP head, e - ECMP
+                    c - Contributing to ECMP, % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  LocPref Weight  Path
+ * >      RD: 10.1.255.1:11 mac-ip 5000.0006.0000
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.2.4:11 mac-ip 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.4:11 mac-ip 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.2.4:11 mac-ip 5000.000c.0001
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.1
+ * >Ec    RD: 10.1.2.4:11 mac-ip 5000.000c.0001 192.168.11.3
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.2.4:11 mac-ip 5000.000c.0001 192.168.11.3
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.4:11 mac-ip 5000.000c.0001 192.168.11.3
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.1
+
+
+
+#### Symmetric IRB
+Конфигурация Symmetric IRB является рекомендуемой моделью с точки зрения компании Arista.
+
+Symmetric IRB (Symmetrical Integrated Routing and Bridging) — это высокомасштабируемая архитектурная модель маршрутизации в фабриках EVPN VXLAN, при которой как исходный (ingress), так и принимающий (egress) VTEP-коммутаторы симметрично выполняют маршрутизацию трафика: локальный Leaf переводит пакет из клиентского L2 VNI в выделенный транзитный L3 VNI (Tenant VRF), передает его через ядро фабрики, а удаленный Leaf принимает пакет по L3 VNI и маршрутизирует его в целевой L2 VNI получателя. Такая схема избавляет от необходимости растягивать абсолютно все клиентские VLAN и интерфейсы SVI по всей фабрике, минимизирует ARP-таблицы на коммутаторах и изолирует широковещательный трафик в пределах конкретных Leaf-узлов.
+
+Здесь появляется транзитный VLAN и транзитный L3 VNI, который связывается непосредственно с VRF для транспорта трафика в остальном конфигурация схожая:
+```
+vrf instance vrfSYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Symmetric IRB
+!
+ip routing vrf vrfSYM-IRB01
+!
+vlan 4001               ! VLAN для транзитного L3-транспорта (Symetric IRB)  VLAN
+   name L3VNI01
+!
+interface vlan 4001
+   description --- Virtual (VLAN:L3VNI01, VRF:vrfL3VNI01): L3 transport interface
+   vrf vrfSYM-IRB01
+!
+interface Vxlan1
+   vxlan vrf vrfSYM-IRB01 vni 14001
+!
+interface Vlan12
+   description --- Virtual (VLAN012:VLAN-BASED02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.12.250/24
+   ip virtual-router address 192.168.12.253
+!
+interface Vlan22
+   description --- Virtual (VLAN022:VLAN-AWARE02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.22.250/24
+   ip virtual-router address 192.168.22.253
+!
+router bgp 65000
+   vrf vrfSYM-IRB01
+   route-target import evpn 4001:4001
+   route-target export evpn 4001:4001
+   redistribute connected
+!
+address-family evpn
+   neighbor grpSPINES activate
+```
+
+> Следует отметить следующую деталь: VLAN, предназначенный для транспорта L3-трафика не требует назначения собственного IP-адреса.
+
+Проверим модель IRB.
+
+Убедитесь, что коммутатор корректно связал ваши VLAN и VRF с VXLAN-туннелями:
+```
+swLeaf04#sh vxlan vni
+VNI to VLAN Mapping for Vxlan1
+VNI         VLAN       Source       Interface       802.1Q Tag
+----------- ---------- ------------ --------------- ----------
+10011       11         static       Ethernet4       11
+                                    Vxlan1          11
+10012       12         static       Ethernet4       12
+                                    Vxlan1          12
+10021       21         static       Ethernet4       21
+                                    Vxlan1          21
+10022       22         static       Ethernet4       22
+                                    Vxlan1          22
+
+VNI to dynamic VLAN Mapping for Vxlan1
+VNI         VLAN       VRF                Source
+----------- ---------- ------------------ ------------
+14001       4097       vrfSYM-IRB01       evpn
+```
+
+И проверим состояние RIB во всех VRF'ах:
+```
+swBorderLeaf01#show ip route vrf all
+
+VRF: default
+Source Codes:
+       C - connected, S - static, K - kernel,
+       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
+       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
+       N2 - OSPF NSSA external type2, B - Other BGP Routes,
+       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
+       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
+       A O - OSPF Summary, NG - Nexthop Group Static Route,
+       V - VXLAN Control Service, M - Martian,
+       DH - DHCP client installed default route,
+       DP - Dynamic Policy Route, L - VRF Leaked,
+       G  - gRIBI, RC - Route Cache Route,
+       CL - CBF Leaked Route
+
+Gateway of last resort is not set
+
+ I L2     10.1.0.1/32
+           directly connected, Ethernet1
+ I L2     10.1.0.2/32
+           directly connected, Ethernet2
+ I L2     10.1.0.3/32
+           directly connected, Ethernet3
+ I L2     10.1.1.1/32 [115/30]
+           via 10.1.0.1, Ethernet1
+           via 10.1.0.2, Ethernet2
+           via 10.1.0.3, Ethernet3
+ I L2     10.1.2.1/32 [115/30]
+           via 10.1.0.1, Ethernet1
+           via 10.1.0.2, Ethernet2
+           via 10.1.0.3, Ethernet3
+ I L2     10.1.2.2/32 [115/30]
+           via 10.1.0.1, Ethernet1
+           via 10.1.0.2, Ethernet2
+           via 10.1.0.3, Ethernet3
+ I L2     10.1.2.3/32 [115/30]
+           via 10.1.0.1, Ethernet1
+           via 10.1.0.2, Ethernet2
+           via 10.1.0.3, Ethernet3
+ I L2     10.1.2.4/32 [115/30]
+           via 10.1.0.1, Ethernet1
+           via 10.1.0.2, Ethernet2
+           via 10.1.0.3, Ethernet3
+ C        10.1.255.1/32
+           directly connected, Loopback0
+
+
+VRF: vrfASYM-IRB01
+Source Codes:
+       C - connected, S - static, K - kernel,
+       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
+       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
+       N2 - OSPF NSSA external type2, B - Other BGP Routes,
+       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
+       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
+       A O - OSPF Summary, NG - Nexthop Group Static Route,
+       V - VXLAN Control Service, M - Martian,
+       DH - DHCP client installed default route,
+       DP - Dynamic Policy Route, L - VRF Leaked,
+       G  - gRIBI, RC - Route Cache Route,
+       CL - CBF Leaked Route
+
+Gateway of last resort is not set
+
+ C        192.168.11.0/24
+           directly connected, Vlan11
+ C        192.168.21.0/24
+           directly connected, Vlan21
+
+
+VRF: vrfSYM-IRB01
+Source Codes:
+       C - connected, S - static, K - kernel,
+       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
+       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
+       N2 - OSPF NSSA external type2, B - Other BGP Routes,
+       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
+       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
+       A O - OSPF Summary, NG - Nexthop Group Static Route,
+       V - VXLAN Control Service, M - Martian,
+       DH - DHCP client installed default route,
+       DP - Dynamic Policy Route, L - VRF Leaked,
+       G  - gRIBI, RC - Route Cache Route,
+       CL - CBF Leaked Route
+
+Gateway of last resort is not set
+
+ C        192.168.12.0/24
+           directly connected, Vlan12
+ C        192.168.22.0/24
+           directly connected, Vlan22
+```
+
+Все замечательно.
+
+Теперь между этими парами VLAN'ов необходимо поднять маршрутизацию, которая будет осуществляться методом Centralized Routing через роутер `rtBorder01`. Я буду использовать OSPF:
+```
+interface Vlan11
+   ip ospf area 0.0.0.0
+interface Vlan12
+   ip ospf area 0.0.0.0
+interface Vlan21
+   ip ospf area 0.0.0.0
+interface Vlan22
+   ip ospf area 0.0.0.0
+router ospf 10 vrf vrfASYM-IRB01
+   router-id 10.1.11.250
+   passive-interface default
+   no passive-interface Vlan11
+   no passive-interface Vlan21
+   max-lsa 12000
+router ospf 20 vrf vrfSYM-IRB01
+   router-id 10.1.12.250
+   passive-interface default
+   no passive-interface Vlan12
+   no passive-interface Vlan22
+   max-lsa 12000
+```
+
+
+Переходим на роутер:
+```
+
+```
+
+
+
+
+
+
+
+
+
+rtBorder01#ping 192.168.11.3
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.3, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 41/54/65 ms
+rtBorder01#ping 192.168.12.3
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.12.3, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 50/54/61 ms
+rtBorder01#ping 192.168.21.3
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.21.3, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 71/106/227 ms
+rtBorder01#ping 192.168.22.3
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.22.3, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 29/35/43 ms
+
+
+
+
+
+
+
+
+
+
+
+```
+srvHost03#ping vrf vrfVLAN-BUNDLE02 192.168.12.254
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.12.254, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 52/75/110 ms
+```
+
+
+
+
+
+
+
+
+Создаем VLAN для транзитного трафика:
+```
+vlan 4001
+   name L3VNI01
+
+interface vlan 4001
+   description --- Virtual (VLAN:L3VNI01, VRF:vrfL3VNI01): L3 transport interface
+   vrf vrfL3VNI01
+```
+
+Далее, примапим его к интерфейсу Data Plane оверлея:
+```
+interface Vxlan1
+   vxlan vrf vrfL3VNI01 vni 14001
+```
+
+
+
+```
+ip routing vrf vrfL3VNI01
+
+router bgp 65000 ?????????
+   !
+   vrf PROD
+      rd 10.1.255.1:50001
+      route-target import evpn 50001:50001
+      route-target export evpn 50001:50001
+```
+
+```
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+L3VNI
+```
+
+
+
+Клиентские L2 VNI в BGP EVPN теперь можно упаковать в `vlan-aware-bundle` для красоты.
+
+
+Основа настройки выглядит аналогичной 
+
+
+
+
+
+
+
+!
+vlan 11-12
+!
+vlan 4001                               <-- Транзитный VLAN для VRF PROD
+   name L3_VNI_TRUCK_PROD
+!
+! 2. Маппим и клиентские L2 VNI, и транзитный L3 VNI
+interface Vxlan1
+   vxlan source-interface Loopback0
+   vxlan vlan 11 vni 10011
+   vxlan vlan 12 vni 10012
+   vxlan vrf PROD vni 50001             <-- Привязка L3 VNI к VRF
+!
+! 3. Настройка Anycast Gateway (точно так же, как в Asymmetric)
+interface Vlan11
+   vrf forwarding PROD
+   ip address 10.1.11.2/24
+   ip virtual-router address 10.1.11.1  <-- ANYCAST ШЛЮЗ ХОСТОВ
+!
+interface Vlan12
+   vrf forwarding PROD
+   ip address 10.1.12.2/24
+   ip virtual-router address 10.1.12.1  <-- ANYCAST ШЛЮЗ ХОСТОВ
+!
+! 4. Настройка интерфейса транзитного VLAN (SVI без IP)
+interface Vlan4001
+   vrf forwarding PROD
+   ip routing ipv4                      <-- Включаем маршрутизацию в транзитном VNI
+!
+! 5. Настройка BGP
+router bgp 65000
+   ! Активируем передачу IP-маршрутов (Type-5) внутри VRF
+   address-family l3vpn encapsulation vxlan
+      neighbor grpSPINES activate
+   !
+   vlan-aware-bundle CLIENT-NETS
+      rd auto
+      route-target both auto
+      vlan 11-12
+      redistribute learned
 
 
 
