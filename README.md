@@ -8,3 +8,6 @@
 - [Lab02: Построение Underlay сети на OSPF](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab02/README.md)
 - [Lab03: Построение Underlay сети на ISIS](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab03/README.md)
 - [Lab03: Построение Underlay сети (BGP)](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab04/README.md)
+- [Lab04: Построение Underlay сети (BGP)](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab04/README.md)
+- [Lab05: VxLAN. EVPN L2](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab05/README.md)
+- [Lab06: VxLAN. EVPN L3](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab06/README.md)
