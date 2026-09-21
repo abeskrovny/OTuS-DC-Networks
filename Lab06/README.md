@@ -1253,3 +1253,11 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
  *        RD: 10.1.255.1:4001 ip-prefix 192.168.22.0/24
                                  10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
 ```
+
+### Результирующая конфигурация
+
+#### Коммутатор Spine
+Настройки коммутаторов уровня Spine аналогичны.
+```
+
+```
