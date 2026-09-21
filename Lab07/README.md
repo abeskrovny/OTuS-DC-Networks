@@ -944,6 +944,15 @@ Total Mac Addresses for this criterion: 13
 
 Отключим указанные на схеме линии на стороне коммутаторов уровня Leaf:
 ```
+swLeaf01(config)#interface ethernet 1
+swLeaf01(config-if-Et1)#shutdown
+
+swLeaf02(config)#interface ethernet 4
+swLeaf02(config-if-Et4)#shutdown
+```
+
+И проверим связанность со стороны роутера `rtBorder01`:
+```
 rtBorder01# ping 192.168.11.1
 Type escape sequence to abort.
 Sending 5, 100-byte ICMP Echos to 192.168.11.1, timeout is 2 seconds:
@@ -968,7 +977,7 @@ Success rate is 100 percent (5/5), round-trip min/avg/max = 93/219/651 ms
 
 Что-то не все хорошо с IP-адресами, находящимися за Anycast GW.
 
-Но как выяснилось - это просто особенность лабораторной среды и скорости сходимости динамических протоколов маршрутизации в нем. Через несколько минут я получил уже адекватное поведение:
+Но как выяснилось - это просто особенность лабораторной среды и скорости сходимости динамических протоколов маршрутизации в нем. Через пару минут я получил уже адекватное поведение:
 ```
 rtBorder01# ping 192.168.11.1
 Type escape sequence to abort.
@@ -992,10 +1001,8 @@ Sending 5, 100-byte ICMP Echos to 192.168.22.1, timeout is 2 seconds:
 Success rate is 100 percent (5/5), round-trip min/avg/max = 68/88/117 ms
 ```
 
-
-
-
-
+Если теперь посмотреть детальное состояние MLAG-пары:
+```
 swLeaf01#sh mlag detail
 MLAG Configuration:
 domain-id                          :          mlagLeaf01
@@ -1049,17 +1056,25 @@ Agent should be running         :                   True
 P2p mount state changes         :                      1
 Fast MAC redirection enabled    :                  False
 Interface activation interlock  :            unsupported
+```
 
+мы увидим изменения в параметре `Active-partial`.
 
+Это состояние «частичной активности». Оно означает, что локальный коммутатор `swLeaf01` поднял свою половину `Port-Channel` до клиента, но его MLAG-сосед (`swLeaf02`) по какой-то причине свой интерфейс в этот же `Port-Channel` не добавил или не смог поднять физически. Трафик через такой порт ходить может, но отказоустойчивости нет, что представляет собой классический триггер для сетевых аномалий.
 
-
-
+Состояние интерфейсов при этом:
+```
 swLeaf01#sh mlag interfaces
                                                                    local/remote
 mlag desc                                    state  local  remote        status
 ---- ------------------------------ --------------- ------ ------- ------------
    4 --- Trunk (VLAN001): connectio active-partial    Po4     Po4       up/down
+```
 
-
+При этом трафик будет идти по MLAG Peer-Link'у:
 
 ![ICMP Request](ICMPRequest01.png)
+
+### Подключение с использованием технологии Multihoming
+Чтобы не сломать предыдущие настройки, произведенные в фабрике, переход к Multihoming-подключению хоста `srvHost03` начну с коммутатора `swLeaf03` (до сих пор он только принимал апдейты со стороны оверлея).
+
