@@ -944,4 +944,122 @@ Total Mac Addresses for this criterion: 13
 
 Отключим указанные на схеме линии на стороне коммутаторов уровня Leaf:
 ```
+rtBorder01# ping 192.168.11.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.1, timeout is 2 seconds:
+.!!!!
+Success rate is 80 percent (4/5), round-trip min/avg/max = 76/138/268 ms
+rtBorder01# ping 192.168.12.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.12.1, timeout is 2 seconds:
+.....
+Success rate is 0 percent (0/5)
+rtBorder01# ping 192.168.21.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.21.1, timeout is 2 seconds:
+.....
+Success rate is 0 percent (0/5)
+rtBorder01# ping 192.168.22.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.22.1, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 93/219/651 ms
 ```
+
+Что-то не все хорошо с IP-адресами, находящимися за Anycast GW.
+
+Но как выяснилось - это просто особенность лабораторной среды и скорости сходимости динамических протоколов маршрутизации в нем. Через несколько минут я получил уже адекватное поведение:
+```
+rtBorder01# ping 192.168.11.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.1, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 66/92/134 ms
+rtBorder01# ping 192.168.12.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.12.1, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 69/98/173 ms
+rtBorder01# ping 192.168.21.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.21.1, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 98/118/138 ms
+rtBorder01# ping 192.168.22.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.22.1, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 68/88/117 ms
+```
+
+
+
+
+
+swLeaf01#sh mlag detail
+MLAG Configuration:
+domain-id                          :          mlagLeaf01
+local-interface                    :            Vlan4094
+peer-address                       :          172.16.1.1
+peer-link                          :    Port-Channel4094
+hb-peer-address                    :          172.16.2.1
+peer-config                        :          consistent
+
+MLAG Status:
+state                              :              Active
+negotiation status                 :           Connected
+peer-link status                   :                  Up
+local-int status                   :                  Up
+system-id                          :   52:00:00:03:37:66
+dual-primary detection             :            Disabled
+dual-primary interface errdisabled :               False
+
+MLAG Ports:
+Disabled                           :                   0
+Configured                         :                   0
+Inactive                           :                   0
+Active-partial                     :                   1
+Active-full                        :                   0
+
+MLAG Detailed Status:
+State                           :              secondary
+Peer State                      :                primary
+State changes                   :                      2
+Last state change time          :            6:01:51 ago
+Hardware ready                  :                   True
+Failover                        :                  False
+Failover Cause(s)               :                Unknown
+Last failover change time       :                  never
+Secondary from failover         :                  False
+Peer MAC address                :      50:00:00:03:37:66
+Peer MAC routing supported      :                  False
+Reload delay                    :            300 seconds
+Non-MLAG reload delay           :            300 seconds
+Ports errdisabled               :                  False
+Lacp standby                    :                  False
+Configured heartbeat interval   :                4000 ms
+Effective heartbeat interval    :                4000 ms
+Heartbeat timeout               :               60000 ms
+Last heartbeat timeout          :                  never
+Heartbeat timeouts since reboot :                      0
+UDP heartbeat alive             :                   True
+Heartbeats sent/received        :            10902/10850
+Peer monotonic clock offset     :   49234.800875 seconds
+Agent should be running         :                   True
+P2p mount state changes         :                      1
+Fast MAC redirection enabled    :                  False
+Interface activation interlock  :            unsupported
+
+
+
+
+
+swLeaf01#sh mlag interfaces
+                                                                   local/remote
+mlag desc                                    state  local  remote        status
+---- ------------------------------ --------------- ------ ------- ------------
+   4 --- Trunk (VLAN001): connectio active-partial    Po4     Po4       up/down
+
+
+
+![ICMP Request](ICMPRequest01.png)
