@@ -2,6 +2,23 @@
 
 ## Состав работы
 - [Условие задачи](#условие-задачи)
+- [Описание выбранного решения](#описание-выбранного-решения)
+- [Абонентское подключение MLAG парой (L2)](#абонентское-подключение-mlag-парой-l2)
+   - [Краткое описание технологии MLAG](#краткое-описание-технологии-mlag)
+   - [Настройка MLAG на стороне фабрики](#настройка-mlag-на-стороне-фабрики)
+   - [Абонентское подключение и наcтройка оверлэй-маршрутизации (MLAG)](#абонентское-подключение-и-наcтройка-оверлэй-маршрутизации-mlag)
+   - [Команды дополнительной диагностики MLAG](#команды-дополнительной-диагностики-mlag)
+   - [Тестирование сбоя (MLAG)](#тестирование-сбоя-mlag)
+- [Абонентское подключение с использованием технологии Multi-Homing](#абонентское-подключение-с-использованием-технологии-multi-homing)
+   - [Краткое описание технологии Multi-Homing](#краткое-описание-технологии-multi-homing)
+   - [Настройка Multi-Homing на стороне фабрики](#настройка-multi-homing-на-стороне-фабрики)
+   - [Настройка абонентского подключения (Multi-Himing)](#настройка-абонентского-подключения-multi-himing)
+   - [Команды дополнительной диагностики Multi-Homing](#команды-дополнительной-диагностики-multi-homing)
+   - [Тестирование сбоя (Multi-Homing)](#тестирование-сбоя-multi-homing)
+- [Абонентское подключение L3](#абонентское-подключение-l3)
+
+
+
 
 ### Условие задачи
 В этой самостоятельной работе мы ожидаем, что вы самостоятельно:
@@ -18,9 +35,9 @@
 
 ![Схема сети](scheme2.png)
 
-### Подключение MLAG парой
+### Абонентское подключение MLAG парой (L2)
 
-#### Краткое описание технологии
+#### Краткое описание технологии MLAG
 Arista MLAG — это фирменная технология агрегации каналов, которая позволяет объединить два физических (или виртуальных vEOS) коммутатора Leaf-уровня в одну логическую сущность для подключенных к ним серверов или других коммутаторов.
 
 Главные преимущества и архитектура MLAG в Arista EOS:
@@ -506,7 +523,7 @@ interface Port-Channel4
 
 Эта конфигурация эквивалентна для обоих сторон MLAG-пары.
 
-#### Абонентское подключение и намтройка оверлэй-маршрутизации
+#### Абонентское подключение и наcтройка оверлэй-маршрутизации (MLAG)
 Настроим LACP-подключение со стороны роутера-сервера srvHost01:
 ```
 hostname srvHost01
@@ -937,7 +954,7 @@ Vlan    Mac Address       Type        Ports      Moves   Last Move
 Total Mac Addresses for this criterion: 13
 ```
 
-#### Тестирование сбоя
+#### Тестирование сбоя (MLAG)
 Проверим работоспособность MLAG при условии нарушения следующих соединений:
 
 ![Тестирование сбоя](scheme_bad.png)
@@ -1075,6 +1092,575 @@ mlag desc                                    state  local  remote        status
 
 ![ICMP Request](ICMPRequest01.png)
 
-### Подключение с использованием технологии Multihoming
+### Абонентское подключение с использованием технологии Multi-Homing (L2)
+
+#### Краткое описание технологии Multi-Homing
+EVPN Multi-Homing (All-Active Multi-Homing) в архитектуре Arista EOS — это высокомасштабируемая Layer 2/3 технология операторского класса, стандартизированная в RFC 7432 (EVPN ESI), которая выступает современной альтернативой проприетарным multi-chassis технологиям (таким как MLAG/vPC). В отличие от MLAG, EVPN Multi-Homing полностью устраняет необходимость в выделенном межкоммутаторном канале синхронизации (Peer-Link / Inter-Switch Link) в Data Plane, перенося всю логику резервирования и агрегации каналов (LAG) в плоскость управления BGP EVPN Control Plane с использованием механизмов Ethernet Segment Identifier (ESI).
+
+Технология базируется на четырех фундаментальных механизмах, обеспечивающих отказоустойчивость, балансировку и защиту от петель:
+- **Ethernet Segment (ES) и ESI**: Клиентское устройство подключается к нескольким независимым VTEP-коммутаторам (масштабирование N+ за пределы пары Leaf) с помощью стандартного LACP. Группа этих физических интерфейсов на разных VTEP логически объединяется уникальным 10-байтовым идентификатором ESI, который транслируется в BGP.
+- **Синхронизация через BGP EVPN Route Types**: Координация работы Multi-Homing осуществляется через специализированные типы маршрутов: Route Type 4 (Ethernet Segment Route) используется для автоматического обнаружения VTEP-соседей (PE Discovery) в рамках одного ES и выбора Designated Forwarder (DF). Route Type 1 (Ethernet A-D Route) анонсируется в режиме per-ES и per-EVI для обеспечения быстрой сходимости (Fast Convergence / Aliasing).
+- **Предотвращение петель через Designated Forwarder (DF) Election**: Чтобы исключить дублирование широковещательного, неизвестного уникастного и многоадресного трафика (BUM), VTEP-коммутаторы в рамках одного ESI запускают алгоритм выбора DF. Только один коммутатор (DF) имеет право пересылать BUM-трафик из фабрики в сторону клиента для конкретного VLAN, в то время как остальные участники сегмента (Non-DF) этот трафик на выходе дропают.
+- **Механизмы Aliasing и Local Bias / Split-Horizon**: При передаче известного одноадресного трафика (Known Unicast) удаленные VTEP используют Aliasing (на базе Route Type 1), балансируя нагрузку в режиме All-Active на все VTEP, подключенные к данному ESI, даже если MAC-адрес хоста был выучен только одним из них. Для защиты от петель при возврате BUM-трафика обратно в тот же сегмент на чипах Broadcom (в архитектуре Arista) применяется механизм Local Bias / Split-Horizoning: VTEP, получивший пакет, сверяет Source IP (VTEP) в VXLAN-заголовке и, если пакет пришел от соседа по ESI, запрещает его отправку в локальный интерфейс этого же Ethernet Segment.
+
+#### Настройка Multi-Homing на стороне фабрики
 Чтобы не сломать предыдущие настройки, произведенные в фабрике, переход к Multihoming-подключению хоста `srvHost03` начну с коммутатора `swLeaf03` (до сих пор он только принимал апдейты со стороны оверлея).
+
+Сама конфигурация со стороны Leaf'а практически не отличается от конфигурации `swLeaf04` и `swBorderLeaf01`. Различия присутствуют только в конфигурации абонентского подключения.
+```
+vlan 11
+   name VLAN-BASED01
+!
+vlan 12
+   name VLAN-BASED02
+!
+vlan 21
+   name VLAN-AWARE01
+!
+vlan 22
+   name VLAN-AWARE02
+!
+vlan 4001
+   name L3VNI01
+!
+vrf instance vrfASYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Assymetric IRB
+!
+vrf instance vrfSYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Symmetric IRB
+!
+interface Vlan11
+   description --- Virtual (VLAN011:VLAN-BASED01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.11.3/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.11.253
+!
+interface Vlan12
+   description --- Virtual (VLAN012:VLAN-BASED02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.12.3/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.12.253
+!
+interface Vlan21
+   description --- Virtual (VLAN021:VLAN-AWARE01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.21.3/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.21.253
+!
+interface Vlan22
+   description --- Virtual (VLAN022:VLAN-AWARE02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.22.3/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.22.253
+!
+interface Vlan4001
+   description --- Virtual (VLAN:L3VNI01, VRF:vrfL3VNI01): L3 transport interface
+   no autostate
+   vrf vrfSYM-IRB01
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   load-interval 60
+   vxlan source-interface Loopback0
+   vxlan udp-port 4789
+   vxlan vlan 11 vni 10011
+   vxlan vlan 12 vni 10012
+   vxlan vlan 21 vni 10021
+   vxlan vlan 22 vni 10022
+   vxlan vrf vrfSYM-IRB01 vni 14001
+!
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+ip routing
+ip routing vrf vrfASYM-IRB01
+ip routing vrf vrfSYM-IRB01
+!
+router bgp 65000
+   router-id 10.1.2.3
+   neighbor grpSPINES peer group
+   neighbor grpSPINES remote-as 65000
+   neighbor grpSPINES update-source Loopback0
+   neighbor grpSPINES send-community
+   neighbor 10.1.0.1 peer group grpSPINES
+   neighbor 10.1.0.2 peer group grpSPINES
+   neighbor 10.1.0.3 peer group grpSPINES
+   !
+   vlan 11
+      rd auto
+      route-target both 65000:11
+      redistribute learned
+   !
+   vlan 12
+      rd auto
+      route-target both 65000:12
+      redistribute learned
+   !
+   vlan-aware-bundle vabBUNDLE01
+      rd auto
+      route-target both 65000:20
+      redistribute learned
+      vlan 21-22
+   !
+   address-family evpn
+      neighbor grpSPINES activate
+   !
+   vrf vrfSYM-IRB01
+      rd 10.1.2.3:4001
+      route-target import evpn 4001:4001
+      route-target export evpn 4001:4001
+      redistribute connected
+!
+router ospf 10 vrf vrfASYM-IRB01
+   router-id 10.1.11.3
+   passive-interface default
+   no passive-interface Vlan11
+   no passive-interface Vlan21
+   max-lsa 12000
+!
+router ospf 20 vrf vrfSYM-IRB01
+   router-id 10.1.12.3
+   passive-interface default
+   no passive-interface Vlan12
+   no passive-interface Vlan22
+   max-lsa 12000
+```
+
+Настройка клиентского порта:
+```
+interface Ethernet5
+   description --- Port-channel 1 (Multi-Homing): connection to srvHost3:Gi1
+   load-interval 60
+   channel-group 1 mode active
+!
+interface Port-Channel1
+   description --- Trunk (VLAN001): connection to srvHost3
+   load-interval 60
+   switchport trunk allowed vlan 1-999
+   switchport mode trunk
+   !
+   evpn ethernet-segment
+      identifier auto lacp
+   lacp system-id 001c.7300.0101
+```
+
+В настройках присутствуют следующие идентификаторы:
+- **system-id**: определяет глобальный идентификатор системы LACP (System ID). Он используется протоколом LACP (802.3ad) для того, чтобы подключенное устройство могло однозначно определить, что все физические линки приходят на одно и то же логическое устройство. Я использую адрес, выбранный аналогично `ip virtual-router mac-address`.
+- **ESI**: Ethernet Segment Identifier — это уникальный 10-байтовый (80-битный) идентификатор, используемый в сетевой архитектуре BGP EVPN Multi-Homing для логического объединения нескольких физических каналов или порт-каналов (Port-Channels), идущих от разных коммутаторов (VTEP) к одному конечному клиенту (серверу или роутеру). Проще говоря, это «имя» сетевого стыка, благодаря которому разрозненные коммутаторы фабрики понимают, что они подключены к одной и той же клиентской машине.
+
+По стандарту RFC 7432 идентификатор ESI ID имеет строго фиксированную структуру размером 10 байт (80 бит). Он записывается в виде пяти групп шестнадцатеричных символов, разделенных двоеточиями.
+
+В данном случае, через директиву `identifier auto lacp` устанавливается автоматическая сгенерация 10-байтового ESI ID на основе параметров протокола LACP. Коммутатор строго следует стандарту Type 1 ESI:
+- Он выставляет первый байт в значение 01 (что означает генерацию по LACP).
+- Оставшиеся байты он формирует, забирая данные из приоритета LACP и системного MAC-адреса (System ID), настроенного через директиву `lacp system-id 001c.7300.0101`.
+
+
+Детальная структура ESI ID:
+1. **Первый байт (Byte 0) — Тип генерации (Type)**: Этот байт определяет формат и логику, по которой будут заполнены оставшиеся 9 байт идентификатора. Согласно RFC, существуют следующие типы:
+   - *00 (Arbitrary / Административный)*: Значение задается сетевым инженером вручную. Устройство никак не интерпретирует оставшиеся 9 байт, они служат просто уникальным маркером. Это самый популярный тип для лабораторных работ и Enterprise-сетей.
+   - *01 (IEEE 802.1AX LACP)*: Используется при автоматической генерации, если клиент подключен по LACP. Оставшиеся байты автоматически заполняются на основе LACP System MAC и LACP System Priority.
+   - *02 (MSTP / Bridge ID)*: Сегмент определяется на основе параметров Spanning Tree Root Bridge ID и приоритета.
+   - *03 (DHCP IAID)*: Идентификатор генерируется автоматически на основе системных данных DHCP-сервера.
+   - *04 (Router ID / MAC)*: Заполняется с использованием глобального IP-адреса маршрутизатора (Router ID) и локального индекса интерфейса.
+   - *05 (AS-based)*: Формируется на основе номера автономной системы (Autonomous System Number) BGP.
+2. **Остальные 9 байт (Bytes 1–9) — Значение (Value)**. Содержимое этих байт полностью зависит от выбранного типа.
+
+В архитектуре EVPN существуют два системных значения ESI, которые нельзя назначать клиентским интерфейсам вручную:
+- **0000:0000:0000:0000:0000 (All-Zero ESI)**: Зарезервировано по умолчанию. Означает, что интерфейс подключен к Single-Homed клиенту (обычный сервер без резервирования, включенный только в один Leaf).
+- **FFFF:FFFF:FFFF:FFFF:FFFF (All-One ESI)**: Зарезервировано для Control Plane. Используется в сервисных сообщениях BGP EVPN (например, при передаче маршрутов по умолчанию или сигнализации EVI).
+
+Я не нашел, как получить автоматически назначенный ESI ID, кроме просмотра EVPN маршрутов типа 1:
+```
+swLeaf03#sh bgp evpn route-type auto-discovery
+BGP routing table information for VRF default
+Router identifier 10.1.2.3, local AS number 65000
+Route status codes: * - valid, > - active, S - Stale, E - ECMP head, e - ECMP
+                    c - Contributing to ECMP, % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  LocPref Weight  Path
+ * >      RD: 10.1.2.3:11 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 -                     -       -       0       i
+ * >      RD: 10.1.2.3:12 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 -                     -       -       0       i
+ * >      RD: 10.1.2.3:21 auto-discovery 10021 0100:1ee6:f335:0000:0100
+                                 -                     -       -       0       i
+ * >      RD: 10.1.2.3:21 auto-discovery 10022 0100:1ee6:f335:0000:0100
+                                 -                     -       -       0       i
+ * >      RD: 10.1.2.3:1 auto-discovery 0100:1ee6:f335:0000:0100
+                                 -                     -       -       0       i
+```
+
+Как видно из вывода, автоматически был сгенерирован ESI ID: `0100:1ee6:f335:0000:0100`.
+
+Можно было определить его и руками через директиву `identifier 0000:1111:2222:3333:4444` в субконтексте `evpn ethernet-segment`.
+
+#### Настройка абонентского подключения (Multi-Himing)
+Перейдем на роутер-хост `srvHost03` и удалим абонентское соединение к коммутатору `swLeaf04`:
+```
+srvHost03(config)#no interface gigabitEthernet 2.11
+srvHost03(config)#no interface gigabitEthernet 2.12
+srvHost03(config)#no interface gigabitEthernet 2.21
+srvHost03(config)#no interface gigabitEthernet 2.22
+srvHost03(config)#default interface gigabitEthernet 2
+```
+
+После этого, можно настроить уже подключкение в аггрегированном виде:
+```
+interface Port-channel1
+ description --- Trunk (VLAN001): connection to Leafs
+ no ip address
+ load-interval 60
+ no negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface Port-channel1.11
+ description --- Virtual (VLAN011): VLAN-BUNDLE01
+ encapsulation dot1Q 11
+ vrf forwarding vrfVLAN-BUNDLE01
+ ip address 192.168.11.3 255.255.255.0
+!
+interface Port-channel1.12
+ description --- Virtual (VLAN012): VLAN-BUNDLE02
+ encapsulation dot1Q 12
+ vrf forwarding vrfVLAN-BUNDLE02
+ ip address 192.168.12.3 255.255.255.0
+!
+interface Port-channel1.21
+ description --- Virtual (VLAN021): VLAN-AWARE01
+ encapsulation dot1Q 21
+ vrf forwarding vrfVLAN-AWARE01
+ ip address 192.168.21.3 255.255.255.0
+!
+interface Port-channel1.22
+ description --- Virtual (VLAN022): VLAN-AWARE02
+ encapsulation dot1Q 22
+ vrf forwarding vrfVLAN-AWARE02
+ ip address 192.168.22.3 255.255.255.0
+!
+interface GigabitEthernet1
+ description --- Port-channel 1 (LACP): connection to swLeaf03:Ethernet5
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+```
+
+Проверим связанность с новым подключением со стороны `rtBorder01`:
+```
+rtBorder01# ping 192.168.11.3
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.3, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 82/132/171 ms
+rtBorder01# ping 192.168.12.3
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.12.3, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 70/97/146 ms
+rtBorder01# ping 192.168.21.3
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.21.3, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 98/225/521 ms
+rtBorder01# ping 192.168.22.3
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.22.3, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 121/166/198 ms
+```
+
+Как видно, связанность восстановлена.
+
+Можно было бы продолжать и далее, но необходимо уделить внимание отказоустойчивости системы. 
+
+Предположим, что на коммутаторе swLeaf03 "отваливаются" все аплинки в сторону коммутатов уровня Spine (Ethernet1, Ethernet2, Ethernet3). При этом физический линк вниз к клиенту (`Port-Channel1`) остается в статусе UP. Сервер думает, что `swLeaf03` полностью исправен, и по алгоритму LACP продолжает слать ему трафик. Пакеты прилетают на `swLeaf03`, но коммутатору некуда их дальше отправлять (все аплинки лежат). Трафик просто дропается в «черную дыру».
+
+Чтобы решить эту проблему используется классическая функция link-tracking (или Link Tracking Group). Её задача — гарантировать, что если Leaf-коммутатор теряет аплинки в сторону фабрики и становится «черной дырой» для трафика, то коммутатор принудительно гасит свои даунлинки (абонентские порты). Сервер видит падение физического линка со своей стороны и мгновенно переводит трафик на другие живые Leaf'ы.
+
+Эта ситуация характерна именно для MLAG/ESI. В MLAG она решается посредством внутренних процессов.
+
+Настраивается link-tracking следующим образом:
+```
+link tracking group lgrPortChannel1
+   links minimum 2         ! Минимальное количество аплинков требующихся для работы группы
+   recovery delay 60       ! 60 с задержки перед восстановление (гашение флаппинга)
+!
+interface ethernet 1-3
+   link tracking group lgrPortChannel1 upstream
+!
+interface ethernet 5
+   link tracking group lgrPortChannel1 downstream
+```
+
+Получить информацию по группе можно следующим образом:
+```
+swLeaf03#sh link tracking group detail
+Link State Group: lgrPortChannel1 Status: up
+Upstream Interfaces : Ethernet2 Ethernet1 Ethernet3
+Downstream Interfaces : Ethernet5
+Number of times disabled : 0
+Last disabled never
+```
+
+#### Команды дополнительной диагностики Multi-Homing
+Перед тем, как произвести тестирование сбоя, произведем настройки из предыдущих двух пунктов на коммутаторах `swLeaf04` и `swBorderLeaf01` и включим порты `Gi2` и `Gi3` в `Port-channe1` на хосте `srvHost03`. В результате чего получим:
+```
+srvHost03#show interfaces port-channel 1
+Port-channel1 is up, line protocol is up
+  Hardware is GEChannel, address is 001e.e6f3.35c0 (bia 001e.e6f3.35c0)
+  Description: --- Trunk (VLAN001): connection to Leafs
+  MTU 1500 bytes, BW 3000000 Kbit/sec, DLY 10 usec,
+     reliability 255/255, txload 1/255, rxload 1/255
+  Encapsulation 802.1Q Virtual LAN, Vlan ID  1., loopback not set
+  Keepalive set (10 sec)
+  ARP type: ARPA, ARP Timeout 04:00:00
+    No. of active members in this channel: 3
+        Member 0 : GigabitEthernet1 , Full-duplex, 1000Mb/s
+        Member 1 : GigabitEthernet2 , Full-duplex, 1000Mb/s
+        Member 2 : GigabitEthernet3 , Full-duplex, 1000Mb/s
+    No. of PF_JUMBO supported members in this channel : 3
+  Last input 00:00:00, output 00:00:00, output hang never
+  Last clearing of "show interface" counters never
+  Input queue: 0/1125/0/0 (size/max/drops/flushes); Total output drops: 0
+  Queueing strategy: fifo
+  Output queue: 0/120 (size/max)
+  1 minute input rate 5000 bits/sec, 7 packets/sec
+  1 minute output rate 0 bits/sec, 0 packets/sec
+     24510 packets input, 2684600 bytes, 0 no buffer
+     Received 0 broadcasts (0 IP multicasts)
+     0 runts, 0 giants, 0 throttles
+     0 input errors, 0 CRC, 0 frame, 0 overrun, 0 ignored
+     0 watchdog, 0 multicast, 0 pause input
+     3183 packets output, 236878 bytes, 0 underruns
+     Output 0 broadcasts (0 IP multicasts)
+     0 output errors, 0 collisions, 0 interface resets
+     5 unknown protocol drops
+     0 babbles, 0 late collision, 0 deferred
+     0 lost carrier, 0 no carrier, 0 pause output
+     0 output buffer failures, 0 output buffers swapped out
+```
+
+Состояние LACP:
+```
+swBorderLeaf01#show lacp interface detailed all-ports
+State: A = Active, P = Passive; S=ShortTimeout, L=LongTimeout;
+       G = Aggregable, I = Individual; s+=InSync, s-=OutOfSync;
+       C = Collecting (aggregating incoming frames), X = state machine expired,
+       D = Distributing (aggregating outgoing frames),
+       d = default neighbor state
+             |          |                       Partner
+Port Status  | Select   | Sys-id                 Port# State   OperKey PortPri
+---- --------|----------|----------------------- ----- ------- ------- --------
+Port Channel Port-Channel1:
+Et5  Bundled | Selected | 8000,00-1e-e6-f3-35-00     1 ALGs+CD  0x0001   32768
+
+             |Partner Collector                      Actor
+Port Status  |Churn    MaxDelay Port# State    OperKey  AdminKey  PortPriority
+---- --------|------- --------- ----- -------- -------- --------- -------------
+Port Channel Port-Channel1:
+Et5  Bundled |noChurn     32768     5 ALGs+CD   0x0001    0x0001         32768
+
+                   |              Last                State Machines
+ Port     Status   | Churn       RxTime     Rx         mux
+------- -----------|---------- ----------- ---------- -------------------------
+Port Channel Port-Channel1:
+ Et5      Bundled  | noChurn    19:22:36    Current    CollectingDistributing
+
+                        |
+  Port         Status   |   MuxReason                         TimeoutMultiplier
+--------- --------------|------------------------------------ -----------------
+Port Channel Port-Channel1:
+  Et5          Bundled  |   muxActorCollectingDistributing                    3
+```
+
+Маршруты типа 1:
+```
+swLeaf04#show bgp evpn route-type auto-discovery
+BGP routing table information for VRF default
+Router identifier 10.1.2.4, local AS number 65000
+Route status codes: * - valid, > - active, S - Stale, E - ECMP head, e - ECMP
+                    c - Contributing to ECMP, % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  LocPref Weight  Path
+ * >Ec    RD: 10.1.2.3:11 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.1
+ *  ec    RD: 10.1.2.3:11 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.3:11 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.3
+ * >Ec    RD: 10.1.2.3:12 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.1
+ *  ec    RD: 10.1.2.3:12 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.3:12 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.3
+ * >      RD: 10.1.2.4:11 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 -                     -       -       0       i
+ * >      RD: 10.1.2.4:12 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.255.1:11 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.255.1:11 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.255.1:11 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+ * >Ec    RD: 10.1.255.1:12 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.255.1:12 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.255.1:12 auto-discovery 0 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+ * >Ec    RD: 10.1.2.3:21 auto-discovery 10021 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.1
+ *  ec    RD: 10.1.2.3:21 auto-discovery 10021 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.3:21 auto-discovery 10021 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.3
+ * >      RD: 10.1.2.4:21 auto-discovery 10021 0100:1ee6:f335:0000:0100
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.255.1:21 auto-discovery 10021 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.255.1:21 auto-discovery 10021 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.255.1:21 auto-discovery 10021 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+ * >Ec    RD: 10.1.2.3:21 auto-discovery 10022 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.2.3:21 auto-discovery 10022 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.3:21 auto-discovery 10022 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.1
+ * >      RD: 10.1.2.4:21 auto-discovery 10022 0100:1ee6:f335:0000:0100
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.255.1:21 auto-discovery 10022 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.255.1:21 auto-discovery 10022 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.255.1:21 auto-discovery 10022 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+ * >Ec    RD: 10.1.2.3:1 auto-discovery 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.3:1 auto-discovery 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.1
+ *  ec    RD: 10.1.2.3:1 auto-discovery 0100:1ee6:f335:0000:0100
+                                 10.1.2.3              -       100     0       i Or-ID: 10.1.2.3 C-LST: 10.1.0.3
+ * >      RD: 10.1.2.4:1 auto-discovery 0100:1ee6:f335:0000:0100
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.255.1:1 auto-discovery 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.255.1:1 auto-discovery 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.255.1:1 auto-discovery 0100:1ee6:f335:0000:0100
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+```
+
+И состояние MAC-таблиц на порту агрегата:
+```
+swLeaf03#show mac address-table interface port-channel 1
+          Mac Address Table
+------------------------------------------------------------------
+
+Vlan    Mac Address       Type        Ports      Moves   Last Move
+----    -----------       ----        -----      -----   ---------
+  11    001e.e6f3.35c0    DYNAMIC     Po1        2       0:01:31 ago
+  12    001e.e6f3.35c0    DYNAMIC     Po1        1       0:04:35 ago
+  21    001e.e6f3.35c0    DYNAMIC     Po1        1       0:04:35 ago
+  22    001e.e6f3.35c0    DYNAMIC     Po1        1       0:27:24 ago
+Total Mac Addresses for this criterion: 4
+
+          Multicast Mac Address Table
+------------------------------------------------------------------
+
+Vlan    Mac Address       Type        Ports
+----    -----------       ----        -----
+Total Mac Addresses for this criterion: 0
+```
+
+и туннельного интерфейса:
+```
+swLeaf03#show vxlan address-table
+          Vxlan Mac Address Table
+----------------------------------------------------------------------
+
+VLAN  Mac Address     Type      Prt  VTEP             Moves   Last Move
+----  -----------     ----      ---  ----             -----   ---------
+  11  5000.0006.0000  EVPN      Vx1  10.1.255.1       1       1:33:31 ago
+  12  5000.0006.0000  EVPN      Vx1  10.1.255.1       1       1:33:33 ago
+  21  001e.e5bc.0fc0  EVPN      Vx1  10.1.1.1         1       0:00:57 ago
+  22  001e.e5bc.0fc0  EVPN      Vx1  10.1.1.1         1       0:01:03 ago
+Total Remote Mac Addresses for this criterion: 4
+```
+
+#### Тестирование сбоя (Multi-Homing)
+В качестве тестирования сбоя я хочу рассмотреть ситуацию, когда 2 аплинка в сторону фабрики на коммутаторе `swLeaf03` переходят в аварийное состояние:
+```
+interface ethernet 2 - 3
+   shutdown
+```
+
+В результате этого, тракинг-группа должна опустить даунлинк в сторону абонентского подключения:
+```
+swLeaf03#show link tracking group detail
+Link State Group: lgrPortChannel1 Status: down
+Upstream Interfaces : Ethernet2 Ethernet1 Ethernet3
+Downstream Interfaces : Ethernet5
+Number of times disabled : 1
+Last disabled 0:00:37 ago
+```
+
+На хосте-роутере `srvHost03` интерфейс `Gi1` должен выпасть из `Port-channel1`:
+```
+*Sep 22 19:35:09.748: GigabitEthernet1 taken out of port-channel1
+
+srvHost03#show interfaces port-channel 1
+Port-channel1 is up, line protocol is up
+  Hardware is GEChannel, address is 001e.e6f3.35c0 (bia 001e.e6f3.35c0)
+  Description: --- Trunk (VLAN001): connection to Leafs
+  MTU 1500 bytes, BW 2000000 Kbit/sec, DLY 10 usec,
+     reliability 255/255, txload 1/255, rxload 1/255
+  Encapsulation 802.1Q Virtual LAN, Vlan ID  1., loopback not set
+  Keepalive set (10 sec)
+  ARP type: ARPA, ARP Timeout 04:00:00
+    No. of active members in this channel: 2
+        Member 0 : GigabitEthernet2 , Full-duplex, 1000Mb/s
+        Member 1 : GigabitEthernet3 , Full-duplex, 1000Mb/s
+    No. of PF_JUMBO supported members in this channel : 3
+  Last input 00:00:00, output 00:00:01, output hang never
+  Last clearing of "show interface" counters never
+  Input queue: 0/750/0/0 (size/max/drops/flushes); Total output drops: 0
+  Queueing strategy: fifo
+  Output queue: 0/80 (size/max)
+  1 minute input rate 11000 bits/sec, 8 packets/sec
+  1 minute output rate 0 bits/sec, 0 packets/sec
+     39481 packets input, 4625218 bytes, 0 no buffer
+     Received 0 broadcasts (0 IP multicasts)
+     0 runts, 0 giants, 0 throttles
+     0 input errors, 0 CRC, 0 frame, 0 overrun, 0 ignored
+     0 watchdog, 0 multicast, 0 pause input
+     4178 packets output, 311268 bytes, 0 underruns
+     Output 0 broadcasts (0 IP multicasts)
+     0 output errors, 0 collisions, 0 interface resets
+     7 unknown protocol drops
+     0 babbles, 0 late collision, 0 deferred
+     0 lost carrier, 0 no carrier, 0 pause output
+     0 output buffer failures, 0 output buffers swapped out
+```
+
+После включения портов, состояние агрегата восстановится:
+```
+*Sep 22 19:39:10.241: %EC-5-MINLINKS_MET: Port-channel Port-channel1 is up as its bundled ports (3) meets min-links
+*Sep 22 19:39:10.250: GigabitEthernet1 added as member-3 to port-channel1
+```
+
+### Абонентское подключение L3
 
