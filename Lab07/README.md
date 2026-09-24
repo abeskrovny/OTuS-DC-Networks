@@ -1924,30 +1924,194 @@ Success rate is 100 percent (5/5), round-trip min/avg/max = 8/14/24 ms
 Переходим к настройке динамической маршрутизации.
 
 #### Абонентское подключение L3 с использованием iBGP
+При использовании iBGP (ASN фабрики и сервера одинаковы) коммутаторы Leaf остаются обычными клиентами отражателя маршрутов (Route Reflector) для коммутаторов Spine, но, при этом, становятся отражателями в сторону подключенных к нему серверов.
+
+BGP это позволяет - на одном устройстве может быть иерархия RR, при этом Spine'ы вообще не будут знать о существовании BGP-сессий с серверами, а вся нагрузка по обработке хостовых маршрутов останется на Leaf'ах.
+
+При этом маршрутная информация от серверов, принимаемых Leaf'ом упаковывается в EVPN и продвигается далее в фабрику. Серверам же отдается только маршрут `0.0.0.0/0`, скрывая, таким образом, от него и его "клеток" всю топологию фабрики.
+
+Конфигурация на стороная `swLeaf02`:
+```
+router bgp 65000
+   neighbor srvHost02 peer group
+   neighbor srvHost02 remote-as 65000
+   neighbor srvHost02 route-reflector-client
+   neighbor srvHost02 default-originate
+   !
+   address-family ipv4
+      neighbor srvHost02 activate
+   !
+   vrf vrfASYM-IRB01
+      rd 10.1.2.2:4011
+      route-target import evpn 4011:4011
+      route-target export evpn 4011:4011
+      neighbor 172.16.2.1 peer group srvHost02
+      redistribute connected
+      !
+      address-family ipv4
+         neighbor 172.16.2.1 activate
+```
+
+и `swLeaf03`:
+```
+router bgp 65000
+   neighbor srvHost02 peer group
+   neighbor srvHost02 remote-as 65000
+   neighbor srvHost02 route-reflector-client
+   neighbor srvHost02 default-originate
+   !
+   address-family ipv4
+      neighbor srvHost02 activate
+   !
+   vrf vrfASYM-IRB01
+      rd 10.1.2.3:4011
+      route-target import evpn 4011:4011
+      route-target export evpn 4011:4011
+      neighbor 172.16.3.1 peer group srvHost02
+      redistribute connected
+      !
+      address-family ipv4
+         neighbor 172.16.3.1 activate
+```
+
+Переходим на сторону сервера-роутера `srvHost02` и производим следующие настройки:
+```
+vrf definition vrfASYM
+ rd 65000:4011
+ route-target export 65000:4011
+ route-target import 65000:4011
+!
+interface Loopback11
+ description --- Loopback 11 (VRF:): VLAN011
+ vrf forwarding vrfASYM
+ ip address 192.168.11.2 255.255.255.255
+ load-interval 60
+!
+router bgp 65000
+ bgp log-neighbor-changes
+ bgp router-id 10.1.100.2
+ !
+ address-family ipv4 vrf vrfASYM
+  network 192.168.11.2 mask 255.255.255.255
+  neighbor 172.16.2.0 remote-as 65000
+  neighbor 172.16.2.0 activate
+  neighbor 172.16.3.0 remote-as 65000
+  neighbor 172.16.3.0 activate
+ exit-address-family
+```
+
+Проверим состояние BGP со стороны любого из Leaf'ов:
+```
+swLeaf03#sh bgp summary vrf all
+BGP summary information for VRF default
+Router identifier 10.1.2.3, local AS number 65000
+Neighbor          AS Session State AFI/SAFI                AFI/SAFI State   NLRI Rcd   NLRI Acc
+-------- ----------- ------------- ----------------------- -------------- ---------- ----------
+10.1.0.1       65000 Established   IPv4 Unicast            Negotiated              0          0
+10.1.0.1       65000 Established   L2VPN EVPN              Negotiated             52         52
+10.1.0.2       65000 Established   IPv4 Unicast            Negotiated              0          0
+10.1.0.2       65000 Established   L2VPN EVPN              Negotiated             52         52
+10.1.0.3       65000 Established   IPv4 Unicast            Negotiated              0          0
+10.1.0.3       65000 Established   L2VPN EVPN              Negotiated             52         52
+
+BGP summary information for VRF vrfASYM-IRB01
+Router identifier 192.168.21.3, local AS number 65000
+Neighbor            AS Session State AFI/SAFI                AFI/SAFI State   NLRI Rcd   NLRI Acc
+---------- ----------- ------------- ----------------------- -------------- ---------- ----------
+172.16.3.1       65000 Established   IPv4 Unicast            Negotiated              1          1
+
+BGP summary information for VRF vrfSYM-IRB01
+Router identifier 192.168.22.3, local AS number 65000
+Neighbor          AS Session State AFI/SAFI                AFI/SAFI State   NLRI Rcd   NLRI Acc
+-------- ----------- ------------- ----------------------- -------------- ---------- ----------
+```
+
+и со стороны самого сервера:
+```
+srvHost02#sh bgp vrf * all
+For address family: IPv4 Unicast
 
 
+For address family: IPv6 Unicast
 
 
+For address family: VPNv4 Unicast
+
+BGP table version is 10, local router ID is 10.1.100.2
+Status codes: s suppressed, d damped, h history, * valid, > best, i - internal,
+              r RIB-failure, S Stale, m multipath, b backup-path, f RT-Filter,
+              x best-external, a additional-path, c RIB-compressed,
+              t secondary path, L long-lived-stale,
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+     Network          Next Hop            Metric LocPrf Weight Path
+Route Distinguisher: 65000:4011 (default for vrf vrfASYM)
+ *>i  0.0.0.0          172.16.3.0                    100      0 ?
+ * i                   172.16.2.0                    100      0 ?
+ r>i  172.16.2.0/31    172.16.2.0                    100      0 i
+ r>i  172.16.3.0/31    172.16.3.0                    100      0 i
+ *>i  192.168.11.0     172.16.3.0                    100      0 i
+     Network          Next Hop            Metric LocPrf Weight Path
+ * i                   172.16.2.0                    100      0 i
+ *>   192.168.11.2/32  0.0.0.0                  0         32768 i
+ *>i  192.168.21.0     172.16.3.0                    100      0 i
+ * i                   172.16.2.0                    100      0 i
+
+For address family: IPv4 Multicast
 
 
+For address family: L2VPN E-VPN
 
 
+For address family: VPNv4 Multicast
 
 
+For address family: MVPNv4 Unicast
 
 
+For address family: MVPNv6 Unicast
 
 
+For address family: VPNv4 Flowspec
+```
 
+Однако, при проверке связанности получим что-то типа:
+```
+srvHost02#ping vrf vrfASYM 192.168.11.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.1, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 12/18/27 ms
+srvHost02#ping vrf vrfASYM 192.168.11.3
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.3, timeout is 2 seconds:
+.....
+Success rate is 0 percent (0/5)
+srvHost02#ping vrf vrfASYM 192.168.11.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.1, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 15/23/37 ms
+srvHost02#ping vrf vrfASYM 192.168.11.254
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.254, timeout is 2 seconds:
+.....
+Success rate is 0 percent (0/5)
+srvHost02#ping vrf vrfASYM 192.168.11.253
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.253, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 4/5/8 ms
+srvHost02#ping vrf vrfASYM 192.168.11.254
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.11.254, timeout is 2 seconds:
+.....
+Success rate is 0 percent (0/5)
+```
 
+Результаты пингов с сервера `srvHost02` наглядно демонстрируют классическую проблему асимметричной модели маршрутизации, когда нарушается симметрия трафика из-за отсутствия необходимых SVI-интерфейсов и MAC/IP-маршрутов на удаленных Leaf-коммутаторах.
 
+> У меня не получилось совладать с этой проблемой. Однако, при переходе на BGP с OSPF в Tennant-VRF результат может измениться (проверю это в следующей лабораторной).
 
-
-Пакет, поступающий от сервера, сразу инкапсулируется локальным Leaf-коммутатором в заголовок VXLAN с меткой соответствующего арендатора и передается через ядро фабрики транзитом. Spine-коммутаторы при этом функционируют как чистые L3-транспортеры: они оперируют только внешними IP-адресами VTEP и полностью «слепы» к внутренним IP-адресам серверов, их ARP-таблицам и клиентским маршрутам, что обеспечивает практически безграничное горизонтальное масштабирование фабрики ЦОД.
-
-
-
-
----
-
-Маршрут 5 типа работает только через VRF. Надо это дело того...
+#### Абонентское подключение L3 с использованием eBGP
