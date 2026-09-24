@@ -927,7 +927,7 @@ mlag  desc                                  state  local   remote        status
    4  --- Trunk (VLAN001): connectio  active-full    Po4      Po4         up/up
 ```
 
-Есть также команда просмотра таблицы MAC-адресов, ассоциированных с MLAG:
+Команда просмотра таблицы MAC-адресов, ассоциированных с MLAG:
 ```
 swLeaf01#show mac address-table mlag
           Mac Address Table
@@ -1254,7 +1254,6 @@ interface Port-Channel1
 - Он выставляет первый байт в значение 01 (что означает генерацию по LACP).
 - Оставшиеся байты он формирует, забирая данные из приоритета LACP и системного MAC-адреса (System ID), настроенного через директиву `lacp system-id 001c.7300.0101`.
 
-
 Детальная структура ESI ID:
 1. **Первый байт (Byte 0) — Тип генерации (Type)**: Этот байт определяет формат и логику, по которой будут заполнены оставшиеся 9 байт идентификатора. Согласно RFC, существуют следующие типы:
    - *00 (Arbitrary / Административный)*: Значение задается сетевым инженером вручную. Устройство никак не интерпретирует оставшиеся 9 байт, они служат просто уникальным маркером. Это самый популярный тип для лабораторных работ и Enterprise-сетей.
@@ -1296,7 +1295,18 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
 
 Можно было определить его и руками через директиву `identifier 0000:1111:2222:3333:4444` в субконтексте `evpn ethernet-segment`.
 
-#### Настройка абонентского подключения (Multi-Himing)
+В EVPN Multi-Homing архитектуре маршруты 4 типа (Type-4 Ethernet Segment Route) отвечают исключительно за обнаружение соседей по сегменту и проведение выборов Designated Forwarder (DF) для BUM-трафика.
+
+Для маршрутов 4 типа BGP использует специальный служебный атрибут — ES-Import Route Target. В отличие от Type-2, который использует RT из `vlan-aware-bundle`, для Type-4 его нужно включить в BGP глобально. Без этой команды vEOS формирует сегмент локально, но не анонсирует его в BGP, что может вызвать проблемы с репликацией BUM-трафика. 
+
+Поправить это необходимо следующим образом:
+```
+router bgp 65000
+   address-family evpn
+      route type ethernet-segment route-target auto
+```
+
+#### Настройка абонентского подключения (Multi-Homing)
 Перейдем на роутер-хост `srvHost03` и удалим абонентское соединение к коммутатору `swLeaf04`:
 ```
 srvHost03(config)#no interface gigabitEthernet 2.11
@@ -1306,7 +1316,7 @@ srvHost03(config)#no interface gigabitEthernet 2.22
 srvHost03(config)#default interface gigabitEthernet 2
 ```
 
-После этого, можно настроить уже подключкение в аггрегированном виде:
+После этого, можно настроить уже подключение в агрегированном виде:
 ```
 interface Port-channel1
  description --- Trunk (VLAN001): connection to Leafs
@@ -1561,7 +1571,34 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
                                  10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
 ```
 
-И состояние MAC-таблиц на порту агрегата:
+Маршруты 4 типа:
+```
+swLeaf03#sh bgp evpn route-type ethernet-segment
+BGP routing table information for VRF default
+Router identifier 10.1.2.3, local AS number 65000
+Route status codes: * - valid, > - active, S - Stale, E - ECMP head, e - ECMP
+                    c - Contributing to ECMP, % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  LocPref Weight  Path
+ * >      RD: 10.1.2.3:1 ethernet-segment 0100:1ee6:f335:0000:0100 10.1.2.3
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.2.4:1 ethernet-segment 0100:1ee6:f335:0000:0100 10.1.2.4
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.2.4:1 ethernet-segment 0100:1ee6:f335:0000:0100 10.1.2.4
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.2.4:1 ethernet-segment 0100:1ee6:f335:0000:0100 10.1.2.4
+                                 10.1.2.4              -       100     0       i Or-ID: 10.1.2.4 C-LST: 10.1.0.1
+ * >Ec    RD: 10.1.255.1:1 ethernet-segment 0100:1ee6:f335:0000:0100 10.1.255.1
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.3
+ *  ec    RD: 10.1.255.1:1 ethernet-segment 0100:1ee6:f335:0000:0100 10.1.255.1
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.2
+ *  ec    RD: 10.1.255.1:1 ethernet-segment 0100:1ee6:f335:0000:0100 10.1.255.1
+                                 10.1.255.1            -       100     0       i Or-ID: 10.1.255.1 C-LST: 10.1.0.1
+```
+
+Состояние MAC-таблиц на порту агрегата:
 ```
 swLeaf03#show mac address-table interface port-channel 1
           Mac Address Table
@@ -1601,11 +1638,11 @@ Total Remote Mac Addresses for this criterion: 4
 #### Тестирование сбоя (Multi-Homing)
 В качестве тестирования сбоя я хочу рассмотреть ситуацию, когда 2 аплинка в сторону фабрики на коммутаторе `swLeaf03` переходят в аварийное состояние:
 ```
-interface ethernet 2 - 3
-   shutdown
+swLeaf03#(config)#interface ethernet 2 - 3
+swLeaf03#(config-if)#shutdown
 ```
 
-В результате этого, тракинг-группа должна опустить даунлинк в сторону абонентского подключения:
+В результате этого, трэк-группа должна опустить даунлинк в сторону абонентского подключения:
 ```
 swLeaf03#show link tracking group detail
 Link State Group: lgrPortChannel1 Status: down
@@ -1653,11 +1690,264 @@ Port-channel1 is up, line protocol is up
      0 output buffer failures, 0 output buffers swapped out
 ```
 
-После включения портов, состояние агрегата восстановится:
+После включения портов, состояние агрегата восстановится автоматически через 60 секунд:
 ```
 *Sep 22 19:39:10.241: %EC-5-MINLINKS_MET: Port-channel Port-channel1 is up as its bundled ports (3) meets min-links
 *Sep 22 19:39:10.250: GigabitEthernet1 added as member-3 to port-channel1
 ```
 
 ### Абонентское подключение L3
+Подключение оконечных хостов на уровне L3 с использованием протоколов динамической маршрутизации непосредственно к коммутаторам доступа (Leaf) позволяет полностью отказаться от хрупких и плохо масштабируемых L2-технологий резервирования вроде MLAG или vPC. Данный подход переносит обеспечение отказоустойчивости и балансировки трафика (ECMP) на уровень стандартных механизмов маршрутизации, что гарантирует детерминированность фабрики, изоляцию доменов отказа и предсказуемое время сходимости сети (Sub-Second Convergence) при авариях.
 
+Критически важным архитектурным решением в данном сценарии является строгое разграничение плоскостей инфраструктуры и терминирование L3-подключений серверов исключительно в виртуальном Overlay-слое (в контексте Tenant VRF), а не в физическом транспортном каркасе Underlay.
+
+Сеть Underlay выполняет единственную служебную задачу — обеспечение высокоскоростной, максимально стабильной и топологически изолированной IP-связности между Loopback-интерфейсами VTEP (коммутаторов Leaf и Spine) для функционирования инкапсуляции VxLAN. Внедрение маршрутов и адресации конечных серверов напрямую в таблицы маршрутизации Underlay (размещенную де-факто в GRT) нарушает базовый принцип инкапсуляции, перегружает аппаратные ресурсы ASIC (TCAM-таблицы) ядра фабрики и лишает инфраструктуру необходимой гибкости.
+
+Терминирование L3-стыка сервера внутри Overlay на базе BGP EVPN (RFC 9136 / Route Type 5) предоставляет оператору технологическую независимость Control Plane и абсолютную изоляцию трафика пользователей (Multi-Tenancy). 
+
+Организация взаимодействия между сетевой фабрикой и оконечными хостами реализуется через iBGP или eBGP оверлей, развертываемый строго внутри изолированных клиентских контекстов (Tenant VRF).
+
+Leaf-коммутаторы выступают здесь в роли пограничных трансляторов: они принимают префиксы от серверов по классическому BGP и, используя механизмы MP-BGP EVPN, упаковывают их в оверлей фабрики. При этом выбор между iBGP и eBGP на стыке с хостом определяет не только характер распределения автономных систем (ASN), но и диктует применение специфических механизмов Control Plane — таких как обработка AS_Path для защиты от петель или активация роли Route Reflector на интерфейсах доступа для преодоления правил iBGP Split-Horizon.
+
+Вне зависимости от выбора протокола маршрутизации, необходимо учитывать, что один интерфейс (физический или логический) не может принадлежать двум изоляционным контекстам одновременно. В связи с этим каждый физический линк между коммутатором уровня Leaf и сервером разбивается на два тегированных субинтерфейса (802.1Q), каждый из которых терминируется в своем целевом контексте (`vrfASYM-IRB01` и `vrfSYM-IRB01` соответственно), с последующим развертыванием Layer 3 адресации внутри этих p2p-сегментов.
+
+При этом IP-адреса стыковочных /31 подсетей и сами транспортные инкапсулирующие VLAN не инжектируются в наложенную сеть (Overlay) фабрики, выполняя исключительно локальную транзитную роль для построения BGP-соседства с хостом `srvHost02`:
+```
+vlan 4011                     ! Подключение через vrfASYM-IRB01 к interface VLAN011
+   name L3-vrfASYM
+!
+vlan 4012                     ! Подключение через vrfSYM-IRB01 к interface VLAN012
+   name L3-vrfSYM
+```
+
+и собираем L3 линки на стороне `swLeaf02`:
+```
+interface Ethernet5
+   description --- Trunk (VLAN001): connection to srvHost02:Gi1
+   load-interval 60
+   no switchport
+!
+interface Ethernet5.4011
+   description --- Virtual (VLAN4011, VRF: vrfASYM-IRB01): connection to Asymmetric IRB
+   load-interval 60
+   encapsulation dot1q vlan 4011
+   vrf vrfASYM-IRB01
+   ip address 172.16.2.0/31
+!
+interface Ethernet5.4012
+   description --- Virtual (VLAN4012, VRF: vrfSYM-IRB01): connection to Symmetric IRB
+   load-interval 60
+   encapsulation dot1q vlan 4012
+   vrf vrfSYM-IRB01
+   ip address 172.16.2.2/31
+```
+
+и на стороне `swLeaf03`:
+```
+interface Ethernet4
+   description --- Trunk (VLAN001): connection to srvHost02:Gi2
+   load-interval 60
+   no switchport
+!
+interface Ethernet4.4011
+   description --- Virtual (VLAN4011, VRF: vrfASYM-IRB01): connection to Asymmetric IRB
+   load-interval 60
+   encapsulation dot1q vlan 4011
+   vrf vrfASYM-IRB01
+   ip address 172.16.3.0/31
+!
+interface Ethernet4.4012
+   description --- Virtual (VLAN4012, VRF: vrfSYM-IRB01): connection to Symmetric IRB
+   load-interval 60
+   encapsulation dot1q vlan 4012
+   vrf vrfSYM-IRB01
+   ip address 172.16.3.2/31
+```
+
+Переходим на сторону роутера-хоста `srvHost02` и произведим следующие настройки:
+```
+hostname srvHost02
+!
+ip domain name local
+!
+vrf definition vrfASYM
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition vrfSYM
+ !
+ address-family ipv4
+ exit-address-family
+!
+interface GigabitEthernet1
+ description --- Trunk (VLAN001): connection to swLeaf02:Ethernet5
+ no ip address
+ load-interval 60
+!
+interface GigabitEthernet1.4011
+ description --- Virtual: (VLAN4011, VRF:vrfASYM): connection to swLeaf02:Ethernet5
+ encapsulation dot1Q 4011
+ vrf forwarding vrfASYM
+ ip address 172.16.2.1 255.255.255.254
+!
+interface GigabitEthernet1.4012
+ description --- Virtual: (VLAN4012, VRF:vrfSYM): connection to swLeaf02:Ethernet5
+ encapsulation dot1Q 4012
+ vrf forwarding vrfSYM
+ ip address 172.16.2.3 255.255.255.254
+!
+interface GigabitEthernet2
+ description --- Trunk (VLAN001): connection to swLeaf03:Ethernet4
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet2.4011
+ description --- Virtual (VLAN4011, VRF:vrfASYM): connection to swLeaf03:Ethernet4):
+ encapsulation dot1Q 4011
+ vrf forwarding vrfASYM
+ ip address 172.16.3.1 255.255.255.254
+!
+interface GigabitEthernet2.4012
+ description --- Virtual (VLAN4012, VRF:vrfSYM): connection to swLeaf03:Ethernet4):
+ encapsulation dot1Q 4012
+ vrf forwarding vrfSYM
+ ip address 172.16.3.3 255.255.255.254
+```
+
+Пинги у меня не пошли по вине Arista vEOS:
+```
+swLeaf02#sh ip int br
+                                                                        Address
+Interface         IP Address           Status    Protocol         MTU   Owner
+----------------- -------------------- --------- ------------ --------- -------
+Ethernet1         10.1.2.2/32          up        up              9000   Lo0
+Ethernet2         10.1.2.2/32          up        up              9000   Lo0
+Ethernet3         10.1.2.2/32          up        up              9000   Lo0
+Ethernet5.4011    172.16.2.0/31        down      dormant         9194
+Ethernet5.4012    172.16.2.2/31        down      dormant         9194
+Loopback0         10.1.2.2/32          up        up             65535
+Loopback1         10.1.1.1/32          up        up             65535
+Management1       172.16.2.1/31        up        up              1500
+Vlan11            192.168.11.202/24    up        up              1500
+Vlan12            192.168.12.202/24    up        up              1500
+Vlan21            192.168.21.202/24    up        up              1500
+Vlan22            192.168.22.202/24    up        up              1500
+Vlan4001          unassigned           up        up              1500
+Vlan4094          172.16.1.1/31        up        up              1500
+Vlan4097          unassigned           up        up              9164
+```
+
+Статус `dormant` на субинтерфейсах `Ethernet5.4011` и `Ethernet5.4012` возникает из-за того, что родительский физический порт `Ethernet5` находится в режиме Layer 2, в то время как L3-субинтерфейсы в Arista EOS требуют перевода порта в чистый режим маршрутизации (Routed-port). Для исправления ситуации необходимо удалить L2-конфигурацию с родительского интерфейса с помощью команды `no switchport`, после чего инициировать трафик с подключенного устройства.
+
+После чего, состояние связанности в "асимметричном" VRF следующее (проверяем на стороне `srvHost02`):
+```
+srvHost02#sh ip route vrf vrfASYM
+
+Routing Table: vrfASYM
+Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP
+       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area
+       N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2
+       E1 - OSPF external type 1, E2 - OSPF external type 2, m - OMP
+       n - NAT, Ni - NAT inside, No - NAT outside, Nd - NAT DIA
+       i - IS-IS, su - IS-IS summary, L1 - IS-IS level-1, L2 - IS-IS level-2
+       ia - IS-IS inter area, * - candidate default, U - per-user static route
+       H - NHRP, G - NHRP registered, g - NHRP registration summary
+       o - ODR, P - periodic downloaded static route, l - LISP
+       a - application route
+       + - replicated route, % - next hop override, p - overrides from PfR
+       & - replicated local route overrides by connected
+
+Gateway of last resort is not set
+
+      172.16.0.0/16 is variably subnetted, 4 subnets, 2 masks
+C        172.16.2.0/31 is directly connected, GigabitEthernet1.4011
+L        172.16.2.1/32 is directly connected, GigabitEthernet1.4011
+C        172.16.3.0/31 is directly connected, GigabitEthernet2.4011
+L        172.16.3.1/32 is directly connected, GigabitEthernet2.4011
+
+srvHost02#ping vrf vrfASYM 172.16.2.0
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 172.16.2.0, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 3/13/22 ms
+
+srvHost02#ping vrf vrfASYM 172.16.3.0
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 172.16.3.0, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 6/23/65 ms
+```
+
+и "симметричном":
+```
+srvHost02#sh ip route vrf vrfSYM
+
+Routing Table: vrfSYM
+Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP
+       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area
+       N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2
+       E1 - OSPF external type 1, E2 - OSPF external type 2, m - OMP
+       n - NAT, Ni - NAT inside, No - NAT outside, Nd - NAT DIA
+       i - IS-IS, su - IS-IS summary, L1 - IS-IS level-1, L2 - IS-IS level-2
+       ia - IS-IS inter area, * - candidate default, U - per-user static route
+       H - NHRP, G - NHRP registered, g - NHRP registration summary
+       o - ODR, P - periodic downloaded static route, l - LISP
+       a - application route
+       + - replicated route, % - next hop override, p - overrides from PfR
+       & - replicated local route overrides by connected
+
+Gateway of last resort is not set
+
+      172.16.0.0/16 is variably subnetted, 4 subnets, 2 masks
+C        172.16.2.2/31 is directly connected, GigabitEthernet1.4012
+L        172.16.2.3/32 is directly connected, GigabitEthernet1.4012
+C        172.16.3.2/31 is directly connected, GigabitEthernet2.4012
+L        172.16.3.3/32 is directly connected, GigabitEthernet2.4012
+
+srvHost02#ping vrf vrfSYM 172.16.2.2
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 172.16.2.2, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 4/10/19 ms
+
+srvHost02#ping vrf vrfSYM 172.16.3.2
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 172.16.3.2, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 8/14/24 ms
+```
+
+Переходим к настройке динамической маршрутизации.
+
+#### Абонентское подключение L3 с использованием iBGP
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Пакет, поступающий от сервера, сразу инкапсулируется локальным Leaf-коммутатором в заголовок VXLAN с меткой соответствующего арендатора и передается через ядро фабрики транзитом. Spine-коммутаторы при этом функционируют как чистые L3-транспортеры: они оперируют только внешними IP-адресами VTEP и полностью «слепы» к внутренним IP-адресам серверов, их ARP-таблицам и клиентским маршрутам, что обеспечивает практически безграничное горизонтальное масштабирование фабрики ЦОД.
+
+
+
+
+---
+
+Маршрут 5 типа работает только через VRF. Надо это дело того...
