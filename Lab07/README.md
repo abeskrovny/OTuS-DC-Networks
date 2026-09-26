@@ -2262,3 +2262,1470 @@ router bgp 65001
 Работал как раз до этого момента.
 
 Если у преподавателя есть идея, куда бежать - я готов :)
+
+### Окончательные конфигурации оборудования
+
+#### Конфигурация `swSpine01`
+```
+! device: swSpine01 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+service routing protocols model multi-agent
+!
+hostname swSpine01
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+interface Ethernet1
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf01:Ethernet1
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet2
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf02:Ethernet1
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet3
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf03:Ethernet1
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet4
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf04:Ethernet1
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet5
+   description --- L3 p2p (no VLAN, no VRF): connection to swBorderLeaf01:Ethernet1
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet6
+!
+interface Ethernet7
+!
+interface Ethernet8
+!
+interface Loopback0
+   description --- Loopback 0 (no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.0.1/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+ip routing
+!
+ipv6 unicast-routing
+!
+router bgp 65000
+   router-id 10.1.0.1
+   neighbor grpLEAFS peer group
+   neighbor grpLEAFS remote-as 65000
+   neighbor grpLEAFS update-source Loopback0
+   neighbor grpLEAFS route-reflector-client
+   neighbor grpLEAFS send-community
+   neighbor 10.1.2.1 peer group grpLEAFS
+   neighbor 10.1.2.2 peer group grpLEAFS
+   neighbor 10.1.2.3 peer group grpLEAFS
+   neighbor 10.1.2.4 peer group grpLEAFS
+   neighbor 10.1.255.1 peer group grpLEAFS
+   !
+   address-family evpn
+      neighbor grpLEAFS activate
+      neighbor grpLEAFS next-hop-unchanged
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.0001.00
+   is-type level-2
+   log-adjacency-changes
+   !
+   address-family ipv4 unicast
+      maximum-paths 10
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+end
+```
+
+#### Конфигурация `swSpine02`
+```
+! device: swSpine02 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+service routing protocols model multi-agent
+!
+hostname swSpine02
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+interface Ethernet1
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf01:Ethernet2
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet2
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf02:Ethernet2
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet3
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf03:Ethernet2
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet4
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf04:Ethernet2
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet5
+   description --- L3 p2p (no VLAN, no VRF): connection to swBorderLeaf01:Ethernet2
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet6
+!
+interface Ethernet7
+!
+interface Ethernet8
+!
+interface Loopback0
+   description --- Loopback 0 (no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.0.2/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+ip routing
+!
+ipv6 unicast-routing
+!
+router bgp 65000
+   router-id 10.1.0.2
+   neighbor grpLEAFS peer group
+   neighbor grpLEAFS remote-as 65000
+   neighbor grpLEAFS update-source Loopback0
+   neighbor grpLEAFS route-reflector-client
+   neighbor grpLEAFS send-community
+   neighbor 10.1.2.1 peer group grpLEAFS
+   neighbor 10.1.2.2 peer group grpLEAFS
+   neighbor 10.1.2.3 peer group grpLEAFS
+   neighbor 10.1.2.4 peer group grpLEAFS
+   neighbor 10.1.255.1 peer group grpLEAFS
+   !
+   address-family evpn
+      neighbor grpLEAFS activate
+      neighbor grpLEAFS next-hop-unchanged
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.0002.00
+   is-type level-2
+   log-adjacency-changes
+   !
+   address-family ipv4 unicast
+      maximum-paths 10
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+end
+```
+
+#### Конфигурация `swSpine03`
+```
+! device: swSpine03 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+service routing protocols model multi-agent
+!
+hostname swSpine03
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+interface Ethernet1
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf01:Ethernet3
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet2
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf02:Ethernet3
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet3
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf03:Ethernet3
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet4
+   description --- L3 p2p (no VLAN, no VRF): connection to swLeaf04:Ethernet3
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet5
+   description --- L3 p2p (no VLAN, no VRF): connection to swBorderLeaf01:Ethernet3
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet6
+!
+interface Ethernet7
+!
+interface Ethernet8
+!
+interface Loopback0
+   description --- Loopback 0 (no VRF): interface for Underlay Control-Plane
+   ip address 10.1.0.3/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+ip routing
+!
+ipv6 unicast-routing
+!
+router bgp 65000
+   router-id 10.1.0.3
+   neighbor grpLEAFS peer group
+   neighbor grpLEAFS remote-as 65000
+   neighbor grpLEAFS update-source Loopback0
+   neighbor grpLEAFS route-reflector-client
+   neighbor grpLEAFS send-community
+   neighbor 10.1.2.1 peer group grpLEAFS
+   neighbor 10.1.2.2 peer group grpLEAFS
+   neighbor 10.1.2.3 peer group grpLEAFS
+   neighbor 10.1.2.4 peer group grpLEAFS
+   neighbor 10.1.255.1 peer group grpLEAFS
+   !
+   address-family evpn
+      neighbor grpLEAFS activate
+      neighbor grpLEAFS next-hop-unchanged
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.0003.00
+   is-type level-2
+   log-adjacency-changes
+   !
+   address-family ipv4 unicast
+      maximum-paths 10
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+end
+```
+
+#### Конфигурация `swLeaf01`
+```
+! device: swLeaf01 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+service routing protocols model multi-agent
+!
+hostname swLeaf01
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+vlan 11
+   name VLAN-BASED01
+!
+vlan 12
+   name VLAN-BASED02
+!
+vlan 21
+   name VLAN-AWARE01
+!
+vlan 22
+   name VLAN-AWARE02
+!
+vlan 4001
+   name L3VNI01
+!
+vlan 4094
+   name MLAG-PEER-CONTROL
+   trunk group MLAG-Peer-Link
+!
+vrf instance vrfASYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Assymetric IRB
+!
+vrf instance vrfSYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Symmetric IRB
+!
+interface Port-Channel4
+   description --- Trunk (VLAN001): connection to srvHost01:Gi1
+   load-interval 60
+   switchport trunk allowed vlan 1-999
+   switchport mode trunk
+   mlag 4
+!
+interface Port-Channel4094
+   description --- Trunk (VLAN001): Channel-group for MLAG Peer-Link
+   switchport mode trunk
+   switchport trunk group MLAG-Peer-Link
+!
+interface Ethernet1
+   description --- L3 p2p (no VLAN, no VRF): connection for swSpine01:Ethernet1
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet2
+   description --- L3 p2p (no VLAN, no VRF): connection for swSpine02:Ethernet1
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet3
+   description --- L3 p2p (no VLAN, no VRF): connection for swSpine03:Ethernet1
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet4
+   description --- Port-channel 4 (MLAG): connection to srvHost01:Gi1
+   load-interval 60
+   channel-group 4 mode active
+!
+interface Ethernet5
+!
+interface Ethernet6
+!
+interface Ethernet7
+!
+interface Ethernet8
+   description --- Port-channel 4094 (LACP): Channel-group for MLAG Peer-Link
+   channel-group 4094 mode active
+!
+interface Loopback0
+   description --- Loopback 0 (no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.2.1/32
+   isis enable Underlay
+   isis passive
+!
+interface Loopback1
+   description --- Loopback 1 (no VRF): interface for vPC instance
+   load-interval 60
+   ip address 10.1.1.1/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+   description --- L3 p2p (no VLAN, no VRF): interface for MLAG heard-beat
+   ip address 172.16.2.0/31
+!
+interface Vlan1
+   load-interval 60
+!
+interface Vlan11
+   description --- Virtual (VLAN011:VLAN-BASED01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.11.201/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.11.253
+!
+interface Vlan12
+   description --- Virtual (VLAN012:VLAN-BASED02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.12.201/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.12.253
+!
+interface Vlan21
+   description --- Virtual (VLAN021:VLAN-AWARE01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.21.201/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.21.253
+!
+interface Vlan22
+   description --- Virtual (VLAN022:VLAN-AWARE02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.22.201/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.22.253
+!
+interface Vlan4001
+   description --- Virtual (VLAN:L3VNI01, VRF:vrfL3VNI01): L3 transport interface
+   no autostate
+   vrf vrfSYM-IRB01
+!
+interface Vlan4094
+   description --- Virtual (VLAN:MLAG-PEER-CONTROL, no VRF): L2 MLAG Peer-Link Control IP
+   no autostate
+   ip address 172.16.1.0/31
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   vxlan source-interface Loopback1
+   vxlan udp-port 4789
+   vxlan vlan 11 vni 10011
+   vxlan vlan 12 vni 10012
+   vxlan vlan 21 vni 10021
+   vxlan vlan 22 vni 10022
+   vxlan vrf vrfSYM-IRB01 vni 14001
+!
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+ip routing
+ip routing vrf vrfASYM-IRB01
+ip routing vrf vrfSYM-IRB01
+!
+ipv6 unicast-routing
+!
+mlag configuration
+   domain-id mlagLeaf01
+   local-interface Vlan4094
+   peer-address 172.16.1.1
+   peer-address heartbeat 172.16.2.1
+   peer-link Port-Channel4094
+!
+router bgp 65000
+   router-id 10.1.2.1
+   neighbor grpSPINES peer group
+   neighbor grpSPINES remote-as 65000
+   neighbor grpSPINES update-source Loopback0
+   neighbor grpSPINES send-community
+   neighbor 10.1.0.1 peer group grpSPINES
+   neighbor 10.1.0.2 peer group grpSPINES
+   neighbor 10.1.0.3 peer group grpSPINES
+   !
+   vlan 11
+      rd auto
+      route-target both 65000:11
+      redistribute learned
+   !
+   vlan 12
+      rd auto
+      route-target both 65000:12
+      redistribute learned
+   !
+   vlan-aware-bundle vabBUNDLE01
+      rd auto
+      route-target both 65000:20
+      redistribute learned
+      vlan 21-22
+   !
+   address-family evpn
+      neighbor grpSPINES activate
+   !
+   vrf vrfSYM-IRB01
+      rd 10.1.2.1:4001
+      route-target import evpn 4001:4001
+      route-target export evpn 4001:4001
+      redistribute connected
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.2001.00
+   is-type level-2
+   log-adjacency-changes
+   !
+   address-family ipv4 unicast
+      maximum-paths 10
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router ospf 10 vrf vrfASYM-IRB01
+   router-id 10.1.11.1
+   passive-interface default
+   no passive-interface Vlan11
+   no passive-interface Vlan21
+   max-lsa 12000
+!
+router ospf 20 vrf vrfSYM-IRB01
+   router-id 10.1.12.1
+   passive-interface default
+   no passive-interface Vlan12
+   no passive-interface Vlan22
+   max-lsa 12000
+!
+end
+```
+
+#### Конфигурация `swLeaf02`
+```
+! device: swLeaf02 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+service routing protocols model multi-agent
+!
+hostname swLeaf02
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+vlan 11
+   name VLAN-BASED01
+!
+vlan 12
+   name VLAN-BASED02
+!
+vlan 21
+   name VLAN-AWARE01
+!
+vlan 22
+   name VLAN-AWARE02
+!
+vlan 4001
+   name L3VNI01
+!
+vlan 4011
+   name L3-vrfASYM
+!
+vlan 4012
+   name L3-vrfSYM
+!
+vlan 4094
+   name MLAG-PEER-CONTROL
+   trunk group MLAG-Peer-Link
+!
+vrf instance vrfASYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Assymetric IRB
+!
+vrf instance vrfSYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Symmetric IRB
+!
+interface Port-Channel4
+   description --- Trunk (VLAN001): connection to srvHost01:Gi2
+   load-interval 60
+   switchport trunk allowed vlan 1-999
+   switchport mode trunk
+   mlag 4
+!
+interface Port-Channel4094
+   description --- Trunk (VLAN001): Channel-group for MLAG Peer-Link
+   switchport mode trunk
+   switchport trunk group MLAG-Peer-Link
+!
+interface Ethernet1
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine01:Ethernet2
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet2
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine02:Ethernet2
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet3
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine03:Ethernet2
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet4
+   description --- Port-channel 4 (MLAG): connection to srvHost01:Gi2
+   load-interval 60
+   channel-group 4 mode active
+!
+interface Ethernet5
+   description --- Trunk (VLAN001): connection to srvHost02:Gi1
+   load-interval 60
+   no switchport
+!
+interface Ethernet5.4011
+   description --- Virtual (VLAN4011, VRF: vrfASYM-IRB01): connection to Asymmetric IRB
+   load-interval 60
+   encapsulation dot1q vlan 4011
+   vrf vrfASYM-IRB01
+   ip address 172.16.2.0/31
+!
+interface Ethernet5.4012
+   description --- Virtual (VLAN4012, VRF: vrfSYM-IRB01): connection to Symmetric IRB
+   load-interval 60
+   encapsulation dot1q vlan 4012
+   vrf vrfSYM-IRB01
+   ip address 172.16.2.2/31
+!
+interface Ethernet6
+!
+interface Ethernet7
+!
+interface Ethernet8
+   description --- Port-channel 4094 (LACP): Channel-group for MLAG Peer-Link
+   channel-group 4094 mode active
+!
+interface Loopback0
+   description --- Loopback 0 (no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.2.2/32
+   isis enable Underlay
+   isis passive
+!
+interface Loopback1
+   description --- Loopback 1 (no VRF): interface for vPC instance
+   load-interval 60
+   ip address 10.1.1.1/32
+   isis enable Underlay
+   isis passive
+!
+interface Loopback12
+   description --- Loopback 12 (VRF: vrfSYM-IRB01): interface for vrfSYM-IRB01 Control-Plane
+   load-interval 60
+   ip address 192.168.12.102/32
+!
+interface Management1
+   description --- L3 p2p (no VLAN, no VRF): interface for MLAG heard-beat
+   ip address 172.16.2.1/31
+!
+interface Vlan11
+   description --- Virtual (VLAN011:VLAN-BASED01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.11.202/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.11.253
+!
+interface Vlan12
+   description --- Virtual (VLAN012:VLAN-BASED02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.12.202/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.12.253
+!
+interface Vlan21
+   description --- Virtual (VLAN021:VLAN-AWARE01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.21.202/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.21.253
+!
+interface Vlan22
+   description --- Virtual (VLAN022:VLAN-AWARE02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.22.202/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.22.253
+!
+interface Vlan4001
+   description --- Virtual (VLAN:L3VNI01, VRF:vrfL3VNI01): L3 transport interface
+   no autostate
+   vrf vrfSYM-IRB01
+   ip address 192.168.102.1/31
+!
+interface Vlan4094
+   description --- Virtual (VLAN:MLAG-PEER-CONTROL, no VRF): L2 MLAG Peer-Link Control IP
+   ip address 172.16.1.1/31
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   load-interval 60
+   vxlan source-interface Loopback1
+   vxlan udp-port 4789
+   vxlan vlan 11 vni 10011
+   vxlan vlan 12 vni 10012
+   vxlan vlan 21 vni 10021
+   vxlan vlan 22 vni 10022
+   vxlan vrf vrfSYM-IRB01 vni 14001
+!
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+ip routing
+ip routing vrf vrfASYM-IRB01
+ip routing vrf vrfSYM-IRB01
+!
+ipv6 unicast-routing
+!
+mlag configuration
+   domain-id mlagLeaf01
+   local-interface Vlan4094
+   peer-address 172.16.1.0
+   peer-address heartbeat 172.16.2.0
+   peer-link Port-Channel4094
+!
+router bgp 65000
+   router-id 10.1.2.2
+   neighbor grpSPINES peer group
+   neighbor grpSPINES remote-as 65000
+   neighbor grpSPINES update-source Loopback0
+   neighbor grpSPINES send-community
+   neighbor srvHost02 peer group
+   neighbor srvHost02 remote-as 65000
+   neighbor srvHost02 route-reflector-client
+   neighbor srvHost02 default-originate
+   neighbor 10.1.0.1 peer group grpSPINES
+   neighbor 10.1.0.2 peer group grpSPINES
+   neighbor 10.1.0.3 peer group grpSPINES
+   !
+   vlan 11
+      rd auto
+      route-target both 65000:11
+      redistribute learned
+   !
+   vlan 12
+      rd auto
+      route-target both 65000:12
+      redistribute learned
+   !
+   vlan-aware-bundle vabBUNDLE01
+      rd auto
+      route-target both 65000:20
+      redistribute learned
+      vlan 21-22
+   !
+   address-family evpn
+      neighbor grpSPINES activate
+   !
+   address-family ipv4
+      neighbor srvHost02 activate
+   !
+   vrf vrfASYM-IRB01
+      rd 10.1.2.2:4011
+      route-target import evpn 4011:4011
+      route-target export evpn 4011:4011
+      neighbor 172.16.2.1 peer group srvHost02
+      redistribute connected
+      !
+      address-family ipv4
+         neighbor 172.16.2.1 activate
+   !
+   vrf vrfSYM-IRB01
+      rd 10.1.2.2:4001
+      route-target import evpn 4001:4001
+      route-target export evpn 4001:4001
+      neighbor 172.16.2.3 remote-as 65001
+      neighbor 172.16.2.3 default-originate
+      redistribute connected
+      !
+      address-family ipv4
+         neighbor 172.16.2.3 activate
+         redistribute connected
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.2002.00
+   is-type level-2
+   log-adjacency-changes
+   !
+   address-family ipv4 unicast
+      maximum-paths 10
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router ospf 10 vrf vrfASYM-IRB01
+   router-id 10.1.11.2
+   passive-interface default
+   no passive-interface Vlan11
+   no passive-interface Vlan21
+   max-lsa 12000
+!
+router ospf 20 vrf vrfSYM-IRB01
+   router-id 10.1.12.2
+   passive-interface default
+   no passive-interface Vlan12
+   no passive-interface Vlan22
+   max-lsa 12000
+!
+end
+```
+
+#### Конфигурация `swLeaf03`
+```
+! device: swLeaf03 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+service routing protocols model multi-agent
+!
+link tracking group lgrPortChannel1
+   links minimum 2
+   recovery delay 60
+!
+hostname swLeaf03
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+vlan 11
+   name VLAN-BASED01
+!
+vlan 12
+   name VLAN-BASED02
+!
+vlan 21
+   name VLAN-AWARE01
+!
+vlan 22
+   name VLAN-AWARE02
+!
+vlan 4001
+   name L3VNI01
+!
+vlan 4011
+   name L3-vrfASYM
+!
+vlan 4012
+   name L3-vrfSYM
+!
+vrf instance vrfASYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Assymetric IRB
+!
+vrf instance vrfSYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Symmetric IRB
+!
+interface Port-Channel1
+   description --- Trunk (VLAN001): connection to srvHost3
+   load-interval 60
+   switchport trunk allowed vlan 1-999
+   switchport mode trunk
+   !
+   evpn ethernet-segment
+      identifier auto lacp
+   lacp system-id 001c.7300.0101
+!
+interface Ethernet1
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine01:Ethernet3
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group lgrPortChannel1 upstream
+!
+interface Ethernet2
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine02:Ethernet3
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group lgrPortChannel1 upstream
+!
+interface Ethernet3
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine03:Ethernet3
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group lgrPortChannel1 upstream
+!
+interface Ethernet4
+   description --- Trunk (VLAN001): connection to srvHost02:Gi2
+   load-interval 60
+   no switchport
+!
+interface Ethernet4.4011
+   description --- Virtual (VLAN4011, VRF: vrfASYM-IRB01): connection to Asymmetric IRB
+   load-interval 60
+   encapsulation dot1q vlan 4011
+   vrf vrfASYM-IRB01
+   ip address 172.16.3.0/31
+!
+interface Ethernet4.4012
+   description --- Virtual (VLAN4012, VRF: vrfSYM-IRB01): connection to Symmetric IRB
+   load-interval 60
+   encapsulation dot1q vlan 4012
+   vrf vrfSYM-IRB01
+   ip address 172.16.3.2/31
+!
+interface Ethernet5
+   description --- Port-channel 1 (Multi-Homing): connection to srvHost3:Gi1
+   load-interval 60
+   channel-group 1 mode active
+   link tracking group lgrPortChannel1 downstream
+!
+interface Ethernet6
+!
+interface Ethernet7
+!
+interface Ethernet8
+!
+interface Loopback0
+   description --- Loopback 0 (no VRF): interface for Underlay Control-Plane
+   ip address 10.1.2.3/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+interface Vlan11
+   description --- Virtual (VLAN011:VLAN-BASED01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.11.3/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.11.253
+!
+interface Vlan12
+   description --- Virtual (VLAN012:VLAN-BASED02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.12.3/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.12.253
+!
+interface Vlan21
+   description --- Virtual (VLAN021:VLAN-AWARE01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.21.3/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.21.253
+!
+interface Vlan22
+   description --- Virtual (VLAN022:VLAN-AWARE02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.22.3/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.22.253
+!
+interface Vlan4001
+   description --- Virtual (VLAN:L3VNI01, VRF:vrfL3VNI01): L3 transport interface
+   no autostate
+   vrf vrfSYM-IRB01
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   load-interval 60
+   vxlan source-interface Loopback0
+   vxlan udp-port 4789
+   vxlan vlan 11 vni 10011
+   vxlan vlan 12 vni 10012
+   vxlan vlan 21 vni 10021
+   vxlan vlan 22 vni 10022
+   vxlan vrf vrfSYM-IRB01 vni 14001
+!
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+ip routing
+ip routing vrf vrfASYM-IRB01
+ip routing vrf vrfSYM-IRB01
+!
+ipv6 unicast-routing
+!
+router bgp 65000
+   router-id 10.1.2.3
+   neighbor grpSPINES peer group
+   neighbor grpSPINES remote-as 65000
+   neighbor grpSPINES update-source Loopback0
+   neighbor grpSPINES send-community
+   neighbor srvHost02 peer group
+   neighbor srvHost02 remote-as 65000
+   neighbor srvHost02 route-reflector-client
+   neighbor srvHost02 default-originate
+   neighbor 10.1.0.1 peer group grpSPINES
+   neighbor 10.1.0.2 peer group grpSPINES
+   neighbor 10.1.0.3 peer group grpSPINES
+   !
+   vlan 11
+      rd auto
+      route-target both 65000:11
+      redistribute learned
+   !
+   vlan 12
+      rd auto
+      route-target both 65000:12
+      redistribute learned
+   !
+   vlan-aware-bundle vabBUNDLE01
+      rd auto
+      route-target both 65000:20
+      redistribute learned
+      vlan 21-22
+   !
+   address-family evpn
+      route type ethernet-segment route-target auto
+      neighbor grpSPINES activate
+   !
+   address-family ipv4
+      neighbor srvHost02 activate
+   !
+   vrf vrfASYM-IRB01
+      rd 10.1.2.3:4011
+      route-target import evpn 4011:4011
+      route-target export evpn 4011:4011
+      neighbor 172.16.3.1 peer group srvHost02
+      redistribute connected
+      !
+      address-family ipv4
+         neighbor 172.16.3.1 activate
+   !
+   vrf vrfSYM-IRB01
+      rd 10.1.2.3:4001
+      route-target import evpn 4001:4001
+      route-target export evpn 4001:4001
+      redistribute connected
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.2003.00
+   is-type level-2
+   log-adjacency-changes
+   !
+   address-family ipv4 unicast
+      maximum-paths 10
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router ospf 10 vrf vrfASYM-IRB01
+   router-id 10.1.11.3
+   passive-interface default
+   no passive-interface Vlan11
+   no passive-interface Vlan21
+   max-lsa 12000
+!
+router ospf 20 vrf vrfSYM-IRB01
+   router-id 10.1.12.3
+   passive-interface default
+   no passive-interface Vlan12
+   no passive-interface Vlan22
+   max-lsa 12000
+!
+end
+```
+
+#### Конфигурация `swLeaf04`
+```
+! device: swLeaf04 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+service routing protocols model multi-agent
+!
+link tracking group lgrPortChannel1
+   links minimum 2
+   recovery delay 60
+!
+hostname swLeaf04
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+vlan 11
+   name VLAN-BASED01
+!
+vlan 12
+   name VLAN-BASED02
+!
+vlan 21
+   name VLAN-AWARE01
+!
+vlan 22
+   name VLAN-AWARE02
+!
+vlan 4001
+   name L3VNI01
+!
+vrf instance vrfASYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Asymmetric IRB
+!
+vrf instance vrfSYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Symmetric IRB
+!
+interface Port-Channel1
+   description --- Trunk (VLAN001): connection to srvHost3
+   load-interval 60
+   switchport trunk allowed vlan 1-999
+   switchport mode trunk
+   !
+   evpn ethernet-segment
+      identifier auto lacp
+   lacp system-id 001c.7300.0101
+!
+interface Ethernet1
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine02:Ethernet4
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group lgrPortChannel1 upstream
+!
+interface Ethernet2
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine01:Ethernet4
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group lgrPortChannel1 upstream
+!
+interface Ethernet3
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine03:Ethernet4
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group lgrPortChannel1 upstream
+!
+interface Ethernet4
+   description --- Port-channel 1 (Multi-Homing): connection to srvHost3:Gi2
+   load-interval 60
+   channel-group 1 mode active
+   link tracking group lgrPortChannel1 downstream
+!
+interface Ethernet5
+!
+interface Ethernet6
+!
+interface Ethernet7
+!
+interface Ethernet8
+!
+interface Loopback0
+   description --- Loopback 0 (no VRF): interface for Underlay Control-Plane
+   ip address 10.1.2.4/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+interface Vlan11
+   description --- Virtual (VLAN011:VLAN-BASED01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.11.204/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.11.253
+!
+interface Vlan12
+   description --- Virtual (VLAN012:VLAN-BASED02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.12.204/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.12.253
+!
+interface Vlan21
+   description --- Virtual (VLAN021:VLAN-AWARE01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.21.204/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.21.253
+!
+interface Vlan22
+   description --- Virtual (VLAN022:VLAN-AWARE02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.22.204/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.22.253
+!
+interface Vlan4001
+   description --- Virtual (VLAN:L3VNI01, VRF:vrfL3VNI01): L3 transport interface
+   no autostate
+   vrf vrfSYM-IRB01
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   load-interval 60
+   vxlan source-interface Loopback0
+   vxlan udp-port 4789
+   vxlan vlan 11 vni 10011
+   vxlan vlan 12 vni 10012
+   vxlan vlan 21 vni 10021
+   vxlan vlan 22 vni 10022
+   vxlan vrf vrfSYM-IRB01 vni 14001
+!
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+ip routing
+ip routing vrf vrfASYM-IRB01
+ip routing vrf vrfSYM-IRB01
+!
+ipv6 unicast-routing
+!
+router bgp 65000
+   router-id 10.1.2.4
+   neighbor grpSPINES peer group
+   neighbor grpSPINES remote-as 65000
+   neighbor grpSPINES update-source Loopback0
+   neighbor grpSPINES send-community
+   neighbor 10.1.0.1 peer group grpSPINES
+   neighbor 10.1.0.2 peer group grpSPINES
+   neighbor 10.1.0.3 peer group grpSPINES
+   !
+   vlan 11
+      rd auto
+      route-target both 65000:11
+      redistribute learned
+   !
+   vlan 12
+      rd auto
+      route-target both 65000:12
+      redistribute learned
+   !
+   vlan-aware-bundle vabBUNDLE01
+      rd auto
+      route-target both 65000:20
+      redistribute learned
+      vlan 21-22
+   !
+   address-family evpn
+      route type ethernet-segment route-target auto
+      neighbor grpSPINES activate
+   !
+   vrf vrfSYM-IRB01
+      route-target import evpn 4001:4001
+      route-target export evpn 4001:4001
+      redistribute connected
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.2004.00
+   is-type level-2
+   log-adjacency-changes
+   !
+   address-family ipv4 unicast
+      maximum-paths 10
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router ospf 10 vrf vrfASYM-IRB01
+   router-id 10.1.11.4
+   passive-interface default
+   no passive-interface Vlan11
+   no passive-interface Vlan21
+   max-lsa 12000
+!
+router ospf 20 vrf vrfSYM-IRB01
+   router-id 10.1.12.4
+   passive-interface default
+   no passive-interface Vlan12
+   no passive-interface Vlan22
+   max-lsa 12000
+!
+end
+```
+
+#### Конфигурация `swBorderLeaf01`
+```
+
+```

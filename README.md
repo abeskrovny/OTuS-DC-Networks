@@ -12,3 +12,4 @@
 - [Lab05: VxLAN. EVPN L2](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab05/README.md)
 - [Lab06: VxLAN. EVPN L3](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab06/README.md)
 - [Lab07: VxLAN. Аналоги VPC](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab07/README.md)
+- [Lab08: VxLAN. Оптимизация таблиц маршрутизации](https://github.com/abeskrovny/OTuS-DC-Networks/blob/main/Lab08/README.md)
