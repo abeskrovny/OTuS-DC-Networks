@@ -3727,5 +3727,832 @@ end
 
 #### Конфигурация `swBorderLeaf01`
 ```
+! device: swBorderLeaf01 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+service routing protocols model multi-agent
+!
+link tracking group lgrPortChannel1
+   links minimum 2
+   recovery delay 60
+!
+hostname swBorderLeaf01
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+vlan 11
+   name VLAN-BASED01
+!
+vlan 12
+   name VLAN-BASED02
+!
+vlan 21
+   name VLAN-AWARE01
+!
+vlan 22
+   name VLAN-AWARE02
+!
+vlan 4001
+   name L3VNI01
+!
+vrf instance vrfASYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Assymetric IRB
+!
+vrf instance vrfSYM-IRB01
+   description --- VRF: RIB for Overlay Data-Plane of Symmetric IRB
+!
+interface Port-Channel1
+   description --- Trunk (VLAN001): connection to srvHost3
+   load-interval 60
+   switchport trunk allowed vlan 1-999
+   switchport mode trunk
+   !
+   evpn ethernet-segment
+      identifier auto lacp
+   lacp system-id 001c.7300.0101
+!
+interface Ethernet1
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine01:Ethernet3
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group lgrPortChannel1 upstream
+!
+interface Ethernet2
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine02:Ethernet3
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group lgrPortChannel1 upstream
+!
+interface Ethernet3
+   description --- L3 p2p (no VLAN, no VRF): connection to swSpine03:Ethernet3
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group lgrPortChannel1 upstream
+!
+interface Ethernet4
+   description --- Trunk (VLAN001): Connection to rtBorder01:Gi1
+   load-interval 60
+   switchport trunk allowed vlan 1-999
+   switchport mode trunk
+!
+interface Ethernet5
+   description --- Port-channel 1 (Multi-Homing): connection to srvHost3:Gi3
+   load-interval 60
+   channel-group 1 mode active
+   link tracking group lgrPortChannel1 downstream
+!
+interface Ethernet6
+   description --- Access (VLAN001): connection to LAN
+   load-interval 60
+!
+interface Ethernet7
+!
+interface Ethernet8
+!
+interface Loopback0
+   description --- Loopback 0 (no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.255.1/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+interface Vlan11
+   description --- Virtual (VLAN011:VLAN-BASED01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.11.250/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.11.253
+!
+interface Vlan12
+   description --- Virtual (VLAN012:VLAN-BASED02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.12.250/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.12.253
+!
+interface Vlan21
+   description --- Virtual (VLAN021:VLAN-AWARE01, VRF:vrfASYM-IRB01): L3 termination point
+   vrf vrfASYM-IRB01
+   ip address 192.168.21.250/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.21.253
+!
+interface Vlan22
+   description --- Virtual (VLAN022:VLAN-AWARE02, VRF:vrfSYM-IRB01): L3 termination point
+   vrf vrfSYM-IRB01
+   ip address 192.168.22.250/24
+   ip ospf area 0.0.0.0
+   ip virtual-router address 192.168.22.253
+!
+interface Vlan4001
+   description --- Virtual (VLAN:L3VNI01, VRF:vrfL3VNI01): L3 transport interface
+   no autostate
+   vrf vrfSYM-IRB01
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   load-interval 60
+   vxlan source-interface Loopback0
+   vxlan udp-port 4789
+   vxlan vlan 11 vni 10011
+   vxlan vlan 12 vni 10012
+   vxlan vlan 21 vni 10021
+   vxlan vlan 22 vni 10022
+   vxlan vrf vrfSYM-IRB01 vni 14001
+!
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+ip routing
+ip routing vrf vrfASYM-IRB01
+ip routing vrf vrfSYM-IRB01
+!
+ipv6 unicast-routing
+!
+router bgp 65000
+   router-id 10.1.255.1
+   neighbor grpSPINES peer group
+   neighbor grpSPINES remote-as 65000
+   neighbor grpSPINES update-source Loopback0
+   neighbor grpSPINES send-community
+   neighbor 10.1.0.1 peer group grpSPINES
+   neighbor 10.1.0.2 peer group grpSPINES
+   neighbor 10.1.0.3 peer group grpSPINES
+   !
+   vlan 11
+      rd auto
+      route-target both 65000:11
+      redistribute learned
+   !
+   vlan 12
+      rd auto
+      route-target both 65000:12
+      redistribute learned
+   !
+   vlan-aware-bundle vabBUNDLE01
+      rd auto
+      route-target both 65000:20
+      redistribute learned
+      vlan 21-22
+   !
+   address-family evpn
+      route type ethernet-segment route-target auto
+      neighbor grpSPINES activate
+   !
+   vrf vrfSYM-IRB01
+      rd 10.1.255.1:4001
+      route-target import evpn 4001:4001
+      route-target export evpn 4001:4001
+      redistribute connected
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0125.5001.00
+   is-type level-2
+   log-adjacency-changes
+   !
+   address-family ipv4 unicast
+      maximum-paths 10
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router ospf 10 vrf vrfASYM-IRB01
+   router-id 10.1.11.250
+   passive-interface default
+   no passive-interface Vlan11
+   no passive-interface Vlan21
+   max-lsa 12000
+!
+router ospf 20 vrf vrfSYM-IRB01
+   router-id 10.1.12.250
+   passive-interface default
+   no passive-interface Vlan12
+   no passive-interface Vlan22
+   max-lsa 12000
+!
+end
+```
 
+#### Конфигурация `srvHost01`
+```
+Current configuration : 7850 bytes
+!
+! Last configuration change at 13:13:42 UTC Mon Sep 21 2026
+!
+version 17.3
+service timestamps debug datetime msec
+service timestamps log datetime msec
+! Call-home is enabled by Smart-Licensing.
+service call-home
+platform qfp utilization monitor load 80
+platform punt-keepalive disable-kernel-core
+platform console serial
+!
+hostname srvHost01
+!
+boot-start-marker
+boot-end-marker
+!
+vrf definition vrfVLAN-AWARE01
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition vrfVLAN-AWARE02
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition vrfVLAN-BUNDLE01
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition vrfVLAN-BUNDLE02
+ !
+ address-family ipv4
+ exit-address-family
+!
+no aaa new-model
+!
+ip domain name local
+!
+login on-success log
+!
+subscriber templating
+!
+multilink bundle-name authenticated
+!
+license udi pid ISRV sn 9TEKSCDESV1
+diagnostic bootup level minimal
+memory free low-watermark processor 69838
+!
+spanning-tree extend system-id
+!
+redundancy
+!
+lldp run
+!
+interface Port-channel1
+ description --- Trunk (VLAN001): connection to MLAG: swLeaf01, swLeaf02
+ no ip address
+ load-interval 60
+ no negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface Port-channel1.11
+ description --- Virtual (VLAN011): VLAN-BUNDLE01
+ encapsulation dot1Q 11
+ vrf forwarding vrfVLAN-BUNDLE01
+ ip address 192.168.11.1 255.255.255.0
+!
+interface Port-channel1.12
+ description --- Virtual (VLAN012): VLAN-BUNDLE02
+ encapsulation dot1Q 12
+ vrf forwarding vrfVLAN-BUNDLE02
+ ip address 192.168.12.1 255.255.255.0
+!
+interface Port-channel1.21
+ description --- Virtual (VLAN021): VLAN-AWARE01
+ encapsulation dot1Q 21
+ vrf forwarding vrfVLAN-AWARE01
+ ip address 192.168.21.1 255.255.255.0
+!
+interface Port-channel1.22
+ description --- Virtual (VLAN022): VLAN-AWARE02
+ encapsulation dot1Q 22
+ vrf forwarding vrfVLAN-AWARE02
+ ip address 192.168.22.1 255.255.255.0
+!
+interface GigabitEthernet1
+ description --- Port-channel 1 (LACP): connection to swLeaf01:Ethernet4
+ no ip address
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet2
+ description --- Port-channel 1 (LACP): connection to swLeaf02:Ethernet4
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet3
+ no ip address
+ shutdown
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet4
+ no ip address
+ shutdown
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+ip forward-protocol nd
+ip http server
+ip http authentication local
+ip http secure-server
+!
+ip route vrf vrfVLAN-AWARE01 0.0.0.0 0.0.0.0 192.168.21.253
+ip route vrf vrfVLAN-AWARE02 0.0.0.0 0.0.0.0 192.168.22.253
+ip route vrf vrfVLAN-BUNDLE01 0.0.0.0 0.0.0.0 192.168.11.253
+ip route vrf vrfVLAN-BUNDLE02 0.0.0.0 0.0.0.0 192.168.12.253
+!
+control-plane
+!
+mgcp behavior rsip-range tgcp-only
+mgcp behavior comedia-role none
+mgcp behavior comedia-check-media-src disable
+mgcp behavior comedia-sdp-force disable
+!
+mgcp profile default
+!
+line con 0
+ stopbits 1
+line aux 0
+ stopbits 1
+line vty 0 4
+ login
+ transport input ssh
+!
+end
+```
+
+#### Конфигурация `srvHost02`
+```
+Current configuration : 8003 bytes
+!
+! Last configuration change at 16:32:52 UTC Thu Sep 24 2026
+!
+version 17.3
+service timestamps debug datetime msec
+service timestamps log datetime msec
+service call-home
+platform qfp utilization monitor load 80
+platform punt-keepalive disable-kernel-core
+platform console serial
+!
+hostname srvHost02
+!
+boot-start-marker
+boot-end-marker
+!
+vrf definition vrfASYM
+ rd 65000:4011
+ route-target export 65000:4011
+ route-target import 65000:4011
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition vrfSYM
+ rd 65001:4012
+ route-target export 65001:4012
+ route-target import 65001:4012
+ !
+ address-family ipv4
+ exit-address-family
+!
+no aaa new-model
+!
+ip domain name local
+!
+login on-success log
+!
+subscriber templating
+!
+multilink bundle-name authenticated
+!
+license udi pid ISRV sn 93JRK3M5LR6
+diagnostic bootup level minimal
+memory free low-watermark processor 69838
+!
+spanning-tree extend system-id
+!
+redundancy
+!
+lldp run
+!
+interface Loopback11
+ description --- Loopback 11 (VRF:): VLAN011
+ vrf forwarding vrfASYM
+ ip address 192.168.11.2 255.255.255.255
+ load-interval 60
+!
+interface Loopback12
+ description --- Loopback 12 (VRF:): VLAN012
+ vrf forwarding vrfSYM
+ ip address 192.168.12.2 255.255.255.255
+ load-interval 60
+!
+interface GigabitEthernet1
+ description --- Trunk (VLAN001): connection to swLeaf02:Ethernet5
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet1.4011
+ description --- Virtual (VLAN4011):
+ encapsulation dot1Q 4011
+ vrf forwarding vrfASYM
+ ip address 172.16.2.1 255.255.255.254
+!
+interface GigabitEthernet1.4012
+ description --- Virtual (VLAN4012):
+ encapsulation dot1Q 4012
+ vrf forwarding vrfSYM
+ ip address 172.16.2.3 255.255.255.254
+!
+interface GigabitEthernet2
+ description --- Trunk (VLAN001): connection to swLeaf03:Ethernet4
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet2.4011
+ description --- Virtual (VLAN4011):
+ encapsulation dot1Q 4011
+ vrf forwarding vrfASYM
+ ip address 172.16.3.1 255.255.255.254
+!
+interface GigabitEthernet2.4012
+ description --- Virtual (VLAN4012):
+ encapsulation dot1Q 4012
+ vrf forwarding vrfSYM
+ ip address 172.16.3.3 255.255.255.254
+!
+interface GigabitEthernet3
+ no ip address
+ shutdown
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet4
+ no ip address
+ shutdown
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+router ospf 1 vrf vrfSYM
+ router-id 192.168.0.2
+ redistribute bgp 65001
+ network 192.168.12.2 0.0.0.0 area 0
+ neighbor 192.168.11.254
+!
+router bgp 65001
+ bgp router-id 192.168.0.2
+ bgp log-neighbor-changes
+ !
+ address-family ipv4 vrf vrfSYM
+  network 192.168.12.2 mask 255.255.255.255
+  neighbor 172.16.2.2 remote-as 65000
+  neighbor 172.16.2.2 activate
+  neighbor 172.16.3.2 remote-as 65000
+  neighbor 172.16.3.2 activate
+ exit-address-family
+!
+ip forward-protocol nd
+ip http server
+ip http authentication local
+ip http secure-server
+!
+control-plane
+!
+mgcp behavior rsip-range tgcp-only
+mgcp behavior comedia-role none
+mgcp behavior comedia-check-media-src disable
+mgcp behavior comedia-sdp-force disable
+!
+mgcp profile default
+!
+line con 0
+ stopbits 1
+line aux 0
+ stopbits 1
+line vty 0 4
+ login
+ transport input ssh
+!
+end
+```
+
+#### Конфигурация `srvHost03`
+```
+Current configuration : 7634 bytes
+!
+! Last configuration change at 19:38:20 UTC Tue Sep 22 2026
+!
+version 17.3
+service config
+service timestamps debug datetime msec
+service timestamps log datetime msec
+platform qfp utilization monitor load 80
+platform punt-keepalive disable-kernel-core
+platform console serial
+!
+hostname srvHost03
+!
+boot-start-marker
+boot-end-marker
+!
+vrf definition vrfVLAN-AWARE01
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition vrfVLAN-AWARE02
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition vrfVLAN-BUNDLE01
+ !
+ address-family ipv4
+ exit-address-family
+!
+vrf definition vrfVLAN-BUNDLE02
+ !
+ address-family ipv4
+ exit-address-family
+!
+no aaa new-model
+!
+ip domain name local
+!
+login on-success log
+!
+subscriber templating
+!
+multilink bundle-name authenticated
+!
+license udi pid ISRV sn 9XLMXLHHXFK
+diagnostic bootup level minimal
+memory free low-watermark processor 69838
+!
+spanning-tree extend system-id
+!
+redundancy
+!
+lldp run
+!
+interface Port-channel1
+ description --- Trunk (VLAN001): connection to Leafs
+ no ip address
+ load-interval 60
+ no negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface Port-channel1.11
+ description --- Virtual (VLAN011): VLAN-BUNDLE01
+ encapsulation dot1Q 11
+ vrf forwarding vrfVLAN-BUNDLE01
+ ip address 192.168.11.3 255.255.255.0
+!
+interface Port-channel1.12
+ description --- Virtual (VLAN012): VLAN-BUNDLE02
+ encapsulation dot1Q 12
+ vrf forwarding vrfVLAN-BUNDLE02
+ ip address 192.168.12.3 255.255.255.0
+!
+interface Port-channel1.21
+ description --- Virtual (VLAN021): VLAN-AWARE01
+ encapsulation dot1Q 21
+ vrf forwarding vrfVLAN-AWARE01
+ ip address 192.168.21.3 255.255.255.0
+!
+interface Port-channel1.22
+ description --- Virtual (VLAN022): VLAN-AWARE02
+ encapsulation dot1Q 22
+ vrf forwarding vrfVLAN-AWARE02
+ ip address 192.168.22.3 255.255.255.0
+!
+interface GigabitEthernet1
+ description --- Port-channel 1 (LACP): connection to swLeaf03:Ethernet5
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet2
+ description --- Port-channel 1 (LACP): connection to swLeaf04:Ethernet4
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet3
+ description --- Port-channel 1 (LACP): connection to swBorderLeaf01:Ethernet5
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet4
+ no ip address
+ shutdown
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+ip forward-protocol nd
+ip http server
+ip http authentication local
+ip http secure-server
+ip http client source-interface GigabitEthernet3
+!
+ip route vrf vrfVLAN-BUNDLE01 0.0.0.0 0.0.0.0 192.168.11.253
+ip route vrf vrfVLAN-BUNDLE02 0.0.0.0 0.0.0.0 192.168.12.253
+ip route vrf vrfVLAN-AWARE01 0.0.0.0 0.0.0.0 192.168.21.253
+ip route vrf vrfVLAN-AWARE02 0.0.0.0 0.0.0.0 192.168.22.253
+!
+control-plane
+!
+mgcp behavior rsip-range tgcp-only
+mgcp behavior comedia-role none
+mgcp behavior comedia-check-media-src disable
+mgcp behavior comedia-sdp-force disable
+!
+mgcp profile default
+!
+line con 0
+ stopbits 1
+line aux 0
+ stopbits 1
+line vty 0 4
+ login
+ transport input ssh
+!
+end
+```
+
+#### Конфигурация `rtBorder01`
+```
+Current configuration : 6911 bytes
+!
+! Last configuration change at 10:30:02 UTC Sun Sep 20 2026
+! NVRAM config last updated at 13:33:58 UTC Mon Sep 21 2026
+!
+version 17.3
+service config
+service timestamps debug datetime msec
+service timestamps log datetime msec
+service password-encryption
+platform qfp utilization monitor load 80
+platform punt-keepalive disable-kernel-core
+platform console serial
+!
+hostname rtBorder01
+!
+boot-start-marker
+boot-end-marker
+!
+no aaa new-model
+!
+aaa session-id common
+!
+ip domain name local
+!
+login on-success log
+ipv6 unicast-routing
+!
+subscriber templating
+!
+multilink bundle-name authenticated
+!
+license udi pid ISRV sn 9DVGDEN0IH8
+diagnostic bootup level minimal
+memory free low-watermark processor 69838
+!
+spanning-tree extend system-id
+!
+redundancy
+!
+lldp run
+!
+interface GigabitEthernet1
+ description --- Trunk (VLAN001): connection to swBorderLeaf01:Ethernet4
+ ip dhcp client client-id ascii rtBorder01.Underlay.local
+ ip address 10.1.10.101 255.255.255.0
+ load-interval 60
+ negotiation auto
+ ipv6 enable
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet1.11
+ description --- Virtual (VLAN011): VLAN-BASED01
+ encapsulation dot1Q 11
+ ip address 192.168.11.254 255.255.255.0
+ ip ospf 1 area 0
+!
+interface GigabitEthernet1.12
+ description --- Virtual (VLAN012): VLAN-BASED02
+ encapsulation dot1Q 12
+ ip address 192.168.12.254 255.255.255.0
+!
+interface GigabitEthernet2
+ no ip address
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet3
+ no ip address
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet4
+ no ip address
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+router ospf 1
+ router-id 10.1.255.254
+ network 192.168.0.0 0.0.255.255 area 0
+ default-information originate always
+!
+ip forward-protocol nd
+ip http server
+ip http authentication local
+ip http secure-server
+ip http client source-interface GigabitEthernet1
+!
+ip route 0.0.0.0 0.0.0.0 10.1.10.2
+ip ssh version 2
+!
+control-plane
+!
+mgcp behavior rsip-range tgcp-only
+mgcp behavior comedia-role none
+mgcp behavior comedia-check-media-src disable
+mgcp behavior comedia-sdp-force disable
+!
+mgcp profile default
+!
+line con 0
+ exec-timeout 0 0
+ stopbits 1
+line aux 0
+ stopbits 1
+line vty 0 4
+ transport input ssh
+!
+end
 ```
