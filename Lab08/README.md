@@ -22,14 +22,16 @@
 
 Кроме того, я хочу гармонизировать все идентификаторы, их названия и произвести весь необходимый для реальной задачи тюнинг.
 
+### Настройка фабрики
+
+#### Настройка базового функционала Underlay/Overlay
 На уровне подстилающей сети я буду использовать приватную сеть А-класса 10.0.0.0/8, генерация адреса в которой будет производиться согласно правила `10.<Pod>.<Type>.<Number>`, где:
 - **Pod (Point of Delivery)**: "точка предоставления услуг" - модульный блок сетевой и вычислительной инфраструктуры, который имеет четко определенные границы, предсказуемую производительность и масштабируется как единое целое.
 - **Type**: тип оборудования:
    - *0-100*: физическое;
       - 1: коммутатор уровня Leaf;
       - 2: коммутатор уровня Spine;
-      - 3: коммутатор уровня Super-Spine.
-   - *101-200*: виртуальное.
+      - 3: коммутатор уровня Super-Spine;
 
 Согласно схеме, настройки в табличном виде предствалены в таблице:
 
@@ -267,7 +269,7 @@ ip routing
 ipv6 unicast-routing
 !
 router bgp 65001
-   !! !! Main Layer of Overlay Control-Plane
+   !! Main Layer of Overlay Control-Plane
    router-id 10.1.1.1
    update wait-for-convergence
    update wait-install
@@ -288,7 +290,7 @@ router bgp 65001
    neighbor 10.1.2.3 peer group grpSPINES
    !
    address-family evpn
-      neighbor grpLEAFS activate
+      neighbor grpSPINES activate
 !
 router isis Underlay
    hello padding disabled
@@ -314,14 +316,79 @@ router multicast
 
 Конфигурации всех хостов сброшены.
 
-На уровне наложенной сети (оверлейной) будет использоваться iBGP c ASN:65001 (последняя декада указывает на номер POD'а). Все арендаторы (Tenant) будут находиться в ???
+На уровне наложенной сети (оверлейной) будет использоваться iBGP c ASN:65001 (последняя декада указывает на номер POD'а).
+
+С точки зрения поддержки арендаторов, необходимо подготовить отдельные VRF для изоляции их Data-Plane между друг-другом и Control-Plane самой фабрики.
 
 *Таблица 2: Накладные (оверлейные) сети L3*
 
-| **Арендатор** | **VRF Name** | **ASN** | **Target** | **L3VLAN** | **L3VNI** |
+| **Арендатор** | **VRF Name** | **ASN** | **Target** | **L3VNI** | **L3VLAN** |
 |-|-|-|-|-|-|
-| Tenant A | TENANT-A | 65101 | 101 | 1101000 | 4101 |
-| Tenant B | TENANT-B | 65102 | 102 | 1102000 | 4102 |
+| Tenant A | TENANT-A | 65101 | 101 | 1101000 | 4001 |
+| Tenant B | TENANT-B | 65102 | 102 | 1102000 | 4002 |
+
+Донстройка потребуется только на стороне коммутаторов уровня Leaf:
+```
+vlan 4001
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-A
+!
+vlan 4002
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-B
+!
+vrf instance TENANT-A
+   description --- VRF: RIB for Tenant-A
+!
+vrf instance TENANT-B
+   description --- VRF: RIB for Tenant-B
+!
+interface Vlan4001
+   description --- Virtual (VLAN4001, VRF: TENANT-A): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-A
+!
+interface Vlan4002
+   description --- Virtual (VLAN4002, VRF: TENANT-B): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-B
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   load-interval 60
+   vxlan source-interface Loopback0                   !! Справедливо для всех Leaf кроме организующих MLAG-пару (swLeaf01 и swLeaf02)
+   vxlan udp-port 4789
+   vxlan vrf TENANT-A vni 1101000
+   vxlan vrf TENANT-B vni 1102000
+!
+ip virtual-router mac-address 00:1c:73:00:00:01       !! Уникален для всей фабрики
+!
+ip routing vrf TENANT-A
+ip routing vrf TENANT-B
+!
+router bgp 65001
+   vrf TENANT-A
+      !! VRF for Tenant A
+      rd 10.1.1.251:101
+      route-target import evpn 65101:101
+      route-target export evpn 65101:101
+      !
+      address-family ipv4
+         redistribute connected
+   !
+   vrf TENANT-B
+      !! VRF for Tenant B
+      rd 10.1.1.251:102
+      route-target import evpn 65102:102
+      route-target export evpn 65102:102
+      !
+      address-family ipv4
+         redistribute connected
+```
+
+Указанные настройки необходимо произвести на всех Leaf'ах фабрики, на которых присутствует хотя бы один VLAN из арендаторских. Фактически, L3VNI создают инфраструктуру для транспорта изолированного трафика каждого их VRF по фабрике. Количество VLAN, присутствующих на конкретном Leaf'е (подключенных через абонентское подключение с сервоеров) не имеет значения, так как маршрутизация внутри VRF будет производиться с помощью технологии Anycast Gateway.
+
+Пользовательские VLAN могут быть произвольными, поэтому нам надо будет либо производить их мутацию на выходе из VTEP, либо использовать пользовательские где это возможно с перенесением логики нумерации на VNI.
 
 *Таблица 3: Накладные (оверлейные) сети L2*
 
@@ -332,6 +399,332 @@ router multicast
 | Tenant A | 6 | 172.12.23.0/24 | 1101006 |
 | Tenant B | 23 | 192.168.23.0/24 | 1102023 |
 | Tenant B | 889 | 10.1.1.0/24 | 1102889 |
+
+Настройки, связанные с L2 имеют следующий вид:
+```
+vlan 6
+   name TENANT-A:VLAN006
+!
+vlan 23
+   name TENANT-B:VLAN023
+!
+vlan 137
+   name TENANT-A:VLAN137
+!
+vlan 889
+   name TENANT-B:VLAN889
+!
+vlan 1026
+   name TENANT-A:VLAN026
+!
+interface Loopback101
+   description --- Loopback (no VLAN, VRF: TENANT-A): interface for Control-Plane for Tenant A
+   load-interval 60
+   ip address 10.1.0.101/32
+!
+interface Loopback102
+   description --- Loopback (no VLAN, VRF: TENANT-B): interface for Control-Plane for Tenant B
+   load-interval 60
+   ip address 10.1.0.102/32
+!
+interface Vlan6
+   description --- Virtual (VLAN006, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address unnumbered Loopback101
+   ip virtual-router address 172.12.23.1
+!
+interface Vlan23
+   description --- Virtual (VLAN023, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address unnumbered Loopback102
+   ip virtual-router address 192.168.23.1
+!
+interface Vlan137
+   description --- Virtual (VLAN137, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address unnumbered Loopback101
+   ip virtual-router address 192.168.12.1
+!
+interface Vlan889
+   description --- Virtual (VLAN889, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address unnumbered Loopback102
+   ip virtual-router address 10.1.1.1
+!
+interface Vlan1026
+   description --- Virtual (VLAN1026, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address unnumbered Loopback101
+   ip virtual-router address 10.128.14.1
+!
+interface Vxlan1
+   vxlan vlan 6 vni 1101006
+   vxlan vlan 23 vni 1102023
+   vxlan vlan 137 vni 1101137
+   vxlan vlan 889 vni 1102889
+   vxlan vlan 1026 vni 1101026
+!
+router bgp 65001
+   vlan-aware-bundle vabTENANT-A
+      rd 10.1.1.251:101
+      route-target both 65101:101
+      redistribute learned
+      vlan 6,137,1026
+   !
+   vlan-aware-bundle vabTENANT-B
+      rd 10.1.1.251:102
+      route-target both 65102:102
+      redistribute learned
+      vlan 23,889
+```
+
+ > Если на отдельном коммутаторе уровня Leaf отсутствует тот или иной пользовательский VLAN, его можно не описывать на соответствующем оборудовании.
+
+#### Переход с Ingress Replication на Multicast
+Хотя Ingress Replication невероятно прост в настройке (не требует PIM в Underlay), у него есть критические архитектурные недостатки, которые делают его неприменимым в больших фабриках:
+• **Огромная нагрузка на аплинки Ingress-лифа**: Когда хост за Leaf'ом генерирует BUM-пакет (например, ARP-запрос), этот Leaf обязан физически скопировать данный пакет (реплицировать) столько раз, сколько удаленных VTEP-соседей находится в этой сети. Если в фабрике 50 коммутаторов уровня Leaf, коммутатор отправит 49 одинаковых копий пакета в свои аплинки, утилизируя полосу пропускания оверлейными дублями.
+• **Линейный рост задержки (Serialization Delay)**: Аппаратный чипсет (ASIC) коммутатора не может вытолкнуть 50 пакетов в кабель одновременно — он отправляет их последовательно, один за другим. В итоге 50-й коммутатор получит свой ARP-запрос значительно позже, чем 1-й, что увеличивает RTT (Round-Trip Time - время приема-передачи) для базовых сетевых процедур.
+• **Ограничения аппаратных таблиц (Flood List Limits)**: У любого чипа есть жесткий лимит на размер так называемого Flood List (списка репликации). При достижении определенного количества VTEP-соседей коммутатор просто аппаратно не сможет обслуживать такую конфигурацию.
+• **Плохая утилизация ресурсов Spines**: Вместо того чтобы коммутатор уровня Spine один раз принял пакет и сам размножил его по сети, он используется как глупый транзит для десятков одинаковых копий пакетов, которые Leaf наплодил самостоятельно.
+
+Для перевода обработки **BUM-трафика** (Broadcast, Unknown Unicast, Multicast) с Head-End Replication (HER / Ingress Replication) на **Multicast в Underlay-сети** на коммутаторах Arista EOS, необходимо настроить протокол **PIM ASN / PIM SM** в транспортной сети и изменить способ флудинга на интерфейсе `Vxlan1`.
+
+**PIM SM — Protocol Independent Multicast - Sparse Mode** (Независимый от протоколов мультикаст — разреженный режим). Это базовый протокол и зонтичный стандарт (описан в RFC 7761). Сам по себе PIM-SM определяет принципы построения деревьев распределения трафика (MDT) на основе reverse path forwarding (RPF). Внутри PIM-SM существуют две разные архитектурные модели обслуживания: ASM и SSM:
+• **PIM ASM — Any Source Multicast** (Мультикаст от любого источника). В этой модели получателю (Receiver) абсолютно всё равно, кто отправляет данные. При этом, он не знает, откуда пойдет поток, поэтому в сети нужен посредник — Rendezvous Point (RP).
+• **PIM SSM — Source-Specific Multicast** (Мультикаст от конкретного источника). В этой модели получатель знает не только группу, но и точный IP-адрес источника, который вещает. RP не требуется.
+
+Главное отличие между ними заключается в том, знает ли получатель трафика заранее, кто этот трафик транслирует, и как сеть организует встречу источника и получателя. Использование SSM в Underlay возможно, но требует специфической поддержки со стороны оверлейного Control-Plane. Ввиду этого я буду использовать более простой в конфигурировании вариант PIM ASM.
+
+При использовании PIM-ASM коммутаторы строят так называемое **Shared Tree (Общее дерево)**, обозначаемое в таблицах маршрутизации как **`(*, G)`**, где `*` — это любой источник, а `G` — мультикаст-группа. Точкой сборки (корнем дерева) всегда выступает RP. Источник шлет трафик на RP. RP шлет трафик по общему дереву получателю. Если трафика много, коммутаторы пытаются переключиться на кратчайший путь до источника (Shortest Path Tree / SPT).
+
+При объявлении RP будем использовать статический режим (для EVPN/VxLAN фабрик динамический BSR практически никогда не используется) с выделенным петлевым интерфейсом `loopback255` на стороне коммутаторов уровня Spine.
+
+
+VNI!!!!!!
+
+
+С точки зрения Underlay-маршрутизации (OSPF/IS-IS/BGP), одинаковый IP-адрес RP анонсируется всеми спайнами одновременно. Ближайшие лифы выбирают кратчайший путь (по метрике IGP или ECMP) до этого адреса.
+
+Однако сам по себе PIM Sparse-Mode не умеет синхронизировать состояние источников мультикаста между разными физическими коммутаторами. Если один Leaf зарегистрировал источник трафика (Source) на Spine01, а другой Leaf запрашивает этот трафик (Receiver) у Spine02, то без дополнительного протокола синхронизации мультикаст работать не будет.
+
+Для решения этой задачи в сетях на Arista EOS применяются два основных протокола: MSDP и PIM Anycast (RFC 4610):
+- **Синхронизация через PIM Anycast**: Самый простой и лаконичный способ, встроенный в сам протокол PIM. Спайны общаются между собой, используя свои **уникальные IP-адреса**, а Anycast IP используют только для обслуживания лифов. Когда на `Spine01` приходит запрос регистрации от источника (через Anycast IP), он пересылает сообщение `PIM Register` на все остальные коммутаторы Spine, перечисленные в его peer-листе.
+- Синхронизация через MSDP: Является классическим подхобом. Spine'ы устанавливают между собой TCP-соединения. Когда `swSpine01` узнает о новом источнике мультикаста, он генерирует Source-Active (SA) сообщение и отправляет его по TCP всем MSDP-соседям. Таким образом, все Spine'ы ведут идентичную базу данных активных источников.
+
+Итоговый выбор PIM-ASM cо статическим указанием IP-адреса RP на стороне коммутаторов Spine и Anycast-синхронизацией между ними:
+```
+ip multicast-routing
+!
+interface Loopback255
+   description --- Loopback (no VLAN, no VRF): interface for VIP Anycast PIM-ASM
+   load-interval 60
+   ip address 10.1.255.255/32
+   isis enable Underlay
+   isis passive
+```
+
+
+loopback255
+10.1.255.255/32
+
+
+
+
+
+
+
+Остался только 
+
++ синхронизация между RP
+
++ что делать с мультакаст-адресами VLAN/Bundle?
+
+
+
+
+
+
+
+
+
+!?!?!?!
+
+Type-3 inclusive multicast Ethernet tag
+
+
+
+#### Настройка стыка с сетью Интернет
+Начну со стороны стыка с роутером-файрволом `fwBorder01`, на коммутаторе фабрики `swBorderLeaf01`.
+
+Арендаторские VLAN  используются ими для терминирования своих устройств и сервисов. Было бы не очень хорошей идеей "растягивать" какой-нибудь из пользовательских VLAN до "роутера-на-палке". Для этих целей я попробую использовать VLAN предназначенные для L3VPN:
+```
+interface Vlan4001
+   description --- Virtual (VLAN4001, VRF: TENANT-A): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-A
+   ip address 10.1.101.1/31
+!
+interface Vlan4002
+   description --- Virtual (VLAN4002, VRF: TENANT-B): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-B
+   ip address 10.1.102.1/31
+```
+
+Конфигурация роутера `fwBorder01` имеет следующий вид:
+```
+hostname fwBorder01
+!
+ip domain name local
+!
+lldp run
+!
+interface GigabitEthernet1
+ description --- Trunk (VLAN001): connection to swBorderLeaf01:Ethernet4
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet1.4001
+ description --- Virtual (VLAN4001, no VRF): interconnection to Tenant A
+ encapsulation dot1Q 4001
+ ip address 10.1.101.0 255.255.255.254
+!
+interface GigabitEthernet1.4002
+ description --- Virtual (VLAN4002, no VRF): interconnection to Tenant B
+ encapsulation dot1Q 4002
+ ip address 10.1.102.0 255.255.255.254
+!
+interface GigabitEthernet2
+ description --- Access (VLAN001): Connection to Internet
+ ip dhcp client client-id ascii 9VSRSPWWB34
+ ip address dhcp
+ negotiation auto
+ no mop enabled
+ no mop sysid
+```
+
+Проверим связанность со стороны роутера:
+```
+fwBorder01#ping 10.1.101.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 10.1.101.1, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 2/6/11 ms
+
+fwBorder01#ping 10.1.102.1
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 10.1.102.1, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 4/5/8 ms
+```
+
+Теперь на стороне коммутатора `swBorderLeaf01`, если посмотреть маршруты EVPN, можно увидеть маршруты типа 5 (`ip-prefix`):
+```
+swBorderLeaf01#sh bgp evpn
+BGP routing table information for VRF default
+Router identifier 10.1.1.251, local AS number 65001
+Route status codes: * - valid, > - active, S - Stale, E - ECMP head, e - ECMP
+                    c - Contributing to ECMP, % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  LocPref Weight  Path
+ * >      RD: 10.1.1.251:101 ip-prefix 10.1.101.0/31
+                                 -                     -       -       0       i
+ * >      RD: 10.1.1.251:102 ip-prefix 10.1.102.0/31
+                                 -                     -       -       0       i
+```
+
+
+
+
+А можно переделать с Ingress Replication в Multicast?
+
+
+
+
+---
+!?!?!?!?
+---
+
+#### Настройка подключения сервера srvHost03 (L2 Multi-Home)
+Переходим к коммутаторам `swLeaf03`, `swLeaf04` и `swBorderLeaf01`. Их конфигурация опирается на описанную в части [Настройка базового функционала Underlay/Overlay](#настройка-базового-функционала-underlayoverlay) с дополнением, связанным с абонентским подключением по технологии Multi-Home:
+```
+```
+
+---
+
+swLeaf04
+```
+interface Ethernet5
+   description --- Trunk (VLAN001): connection to srvHost03:Gi2
+   load-interval 60
+   switchport mode trunk
+```
+
+srvHost03
+```
+
+```
+
+
+
+
+
+
+
+
+---
+
+
+```
+vlan 4091
+   !! Interconnect VLAN for Tenant A
+   name TENANT-A:Interconnect
+!
+vlan 4092
+   !! Interconnect VLAN for Tenant B
+   name TENANT-B:Interconnect
+!
+```
+
+
+!!!
+
+maximum-paths 16
+
+После этого можно будет настроить подключение к роутеру `fwBorder01`:
+```
+
+```
+
+
+
+
+
+Далее, настройки
+
+
+
+---
+
+router bgp 65001
+   vrf TENANT-A
+      rd 10.1.1.1:65101
+      route-target import evpn 65101:101
+      route-target export evpn 65101:101
+
+---
+
+
 
 VLAN могут быть произвольными, как и IP в VRF - это прирогатива заказчика. Для выхода мы используем nat
 
