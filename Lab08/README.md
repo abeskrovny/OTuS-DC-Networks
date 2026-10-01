@@ -385,8 +385,9 @@ interface Vxlan1
    vxlan udp-port 4789
    vxlan vrf TENANT-A vni 1101000
    vxlan vrf TENANT-B vni 1102000
+   vxlan learn-restrict any                           !! Блокировка Data Plane Learning (противодействие атаке MAC-address Hijacking / VTEP Spoofing, использующей динамическое обучение)
 !
-ip virtual-router mac-address 00:1c:73:00:00:01       !! Уникален для всей фабрики
+ip virtual-router mac-address 00:1c:73:00:00:01       !! Задает Anycast MAC (уникальный для всей фабрики)
 !
 ip routing vrf TENANT-A
 ip routing vrf TENANT-B
