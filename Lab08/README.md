@@ -796,11 +796,30 @@ interface Vlan4002
    ip address 10.1.102.1/31
 ```
 
-Конфигурация роутера `fwBorder01` имеет следующий вид:
+Конфигурация роутера `fwBorder01` предполагает терминирование каждого арендатора в собственный VRF и
+имеет следующий вид:
 ```
 hostname fwBorder01
 !
 ip domain name local
+!
+vrf definition TENANT-A
+ description --- VRF: Tenant A RIB
+ rd 65101:101
+ !
+ address-family ipv4
+  route-target export 65101:101
+  route-target import 65101:101
+ exit-address-family
+!
+vrf definition TENANT-B
+ description --- VRF: Tenant B RIB
+ rd 65102:102
+ !
+ address-family ipv4
+  route-target export 65102:102
+  route-target import 65102:102
+ exit-address-family
 !
 lldp run
 !
@@ -815,31 +834,35 @@ interface GigabitEthernet1
 interface GigabitEthernet1.4001
  description --- Virtual (VLAN4001, no VRF): interconnection to Tenant A
  encapsulation dot1Q 4001
+ vrf forwarding TENANT-A
  ip address 10.1.101.0 255.255.255.254
 !
 interface GigabitEthernet1.4002
  description --- Virtual (VLAN4002, no VRF): interconnection to Tenant B
  encapsulation dot1Q 4002
+ vrf forwarding TENANT-B
  ip address 10.1.102.0 255.255.255.254
 !
 interface GigabitEthernet2
  description --- Access (VLAN001): Connection to Internet
- ip dhcp client client-id ascii 9VSRSPWWB34
+ ip dhcp client client-id ascii fwBorder01
  ip address dhcp
  negotiation auto
  no mop enabled
  no mop sysid
+!
+ip route 0.0.0.0 0.0.0.0 dhcp
 ```
 
 Проверим связанность со стороны роутера:
 ```
-fwBorder01#ping 10.1.101.1
+fwBorder01#ping vrf TENANT-A 10.1.101.1
 Type escape sequence to abort.
 Sending 5, 100-byte ICMP Echos to 10.1.101.1, timeout is 2 seconds:
 !!!!!
 Success rate is 100 percent (5/5), round-trip min/avg/max = 2/6/11 ms
 
-fwBorder01#ping 10.1.102.1
+fwBorder01#ping vrf TENANT-B 10.1.102.1
 Type escape sequence to abort.
 Sending 5, 100-byte ICMP Echos to 10.1.102.1, timeout is 2 seconds:
 !!!!!
@@ -863,22 +886,189 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
                                  -                     -       -       0       i
 ```
 
+У меня `fwBorder01` подключен к сети Интернет через интерфейс `Gi2` (DHCP):
+```
+fwBorder01#sh ip route
+Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP
+       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area
+       N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2
+       E1 - OSPF external type 1, E2 - OSPF external type 2, m - OMP
+       n - NAT, Ni - NAT inside, No - NAT outside, Nd - NAT DIA
+       i - IS-IS, su - IS-IS summary, L1 - IS-IS level-1, L2 - IS-IS level-2
+       ia - IS-IS inter area, * - candidate default, U - per-user static route
+       H - NHRP, G - NHRP registered, g - NHRP registration summary
+       o - ODR, P - periodic downloaded static route, l - LISP
+       a - application route
+       + - replicated route, % - next hop override, p - overrides from PfR
+       & - replicated local route overrides by connected
 
+Gateway of last resort is 10.1.10.2 to network 0.0.0.0
 
+S*    0.0.0.0/0 [1/0] via 10.1.10.2
+      10.0.0.0/8 is variably subnetted, 3 subnets, 2 masks
+C        10.1.10.0/24 is directly connected, GigabitEthernet2
+S        10.1.10.2/32 [254/0] via 10.1.10.2, GigabitEthernet2
+L        10.1.10.90/32 is directly connected, GigabitEthernet2
 
-А можно переделать с Ingress Replication в Multicast?
+fwBorder01# ping 8.8.8.8 repeat 3
+Type escape sequence to abort.
+Sending 3, 100-byte ICMP Echos to 8.8.8.8, timeout is 2 seconds:
+!!!
+Success rate is 100 percent (3/3), round-trip min/avg/max = 35/35/36 ms
+```
 
+Необходимо создать eBGP-соседство между VRF'ами на `swBorderLeaf01` и `fwBorder01`, что позволит добиться связанности вдоль сети фабрики к точке терминирования VRF пользователя на стороне выделенного роутера.
 
+На стороне `swBorderLeaf01` произведем следующие настройки:
+```
+router bgp 65001
+   neighbor grpONEARMSYSTEM peer group
+   neighbor grpONEARMSYSTEMS peer group
+   neighbor grpONEARMSYSTEMS bfd
+   neighbor grpONEARMSYSTEMS bfd interval 100 min-rx 100 multiplier 3
+   !
+   vrf TENANT-A
+      neighbor 10.1.101.0 peer group grpONEARMSYSTEM
+      neighbor 10.1.101.0 remote-as 65100
+      neighbor 10.1.101.0 update-source Vlan4001
+   !
+   vrf TENANT-B
+      neighbor 10.1.102.0 peer group grpONEARMSYSTEM
+      neighbor 10.1.102.0 remote-as 65100
+      neighbor 10.1.102.0 update-source Vlan4002
+```
 
+На стороне файрвола `fwBorder01`:
+```
+interface GigabitEthernet1.4001
+ bfd interval 100 min_rx 100 multiplier 3    ! В Cisco IOS тюнинг bfd осуществляется в контексте интерфейса
+!
+interface GigabitEthernet1.4002
+ bfd interval 100 min_rx 100 multiplier 3
+!
+router bgp 65100
+ bgp router-id 10.1.100.1
+ bgp log-neighbor-changes
+ bgp update-delay 1
+ bgp graceful-restart restart-time 300
+ bgp graceful-restart
+ timers bgp 3 9
+ !
+ address-family ipv4 vrf TENANT-A
+  neighbor grpLEAFS peer-group
+  neighbor grpLEAFS description --- Peer: connection between System-on-a-Stick and Leaf switches
+  neighbor grpLEAFS fall-over bfd
+  neighbor 10.1.101.1 remote-as 65001
+  neighbor 10.1.101.1 peer-group grpLEAFS
+  neighbor 10.1.101.1 update-source GigabitEthernet1.4001
+  neighbor 10.1.101.1 activate
+  neighbor 10.1.101.1 default-originate
+ exit-address-family
+!
+ address-family ipv4 vrf TENANT-B
+  neighbor 10.1.102.1 remote-as 65001
+  neighbor 10.1.102.1 description --- Peer: connection between System-on-a-Stick and Leaf switches in VRF TENANT-B
+  neighbor 10.1.102.1 update-source GigabitEthernet1.4002
+  neighbor 10.1.102.1 fall-over bfd
+  neighbor 10.1.102.1 activate
+  neighbor 10.1.102.1 default-originate
+ exit-address-family
+```
 
----
-!?!?!?!?
----
+На этой стадии можно проверить состояние таблиц маршрутизации:
+```
+swBorderLeaf01#sh ip route vrf TENANT-B
+
+VRF: TENANT-B
+Source Codes:
+       C - connected, S - static, K - kernel,
+       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,
+       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,
+       N2 - OSPF NSSA external type2, B - Other BGP Routes,
+       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,
+       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,
+       A O - OSPF Summary, NG - Nexthop Group Static Route,
+       V - VXLAN Control Service, M - Martian,
+       DH - DHCP client installed default route,
+       DP - Dynamic Policy Route, L - VRF Leaked,
+       G  - gRIBI, RC - Route Cache Route,
+       CL - CBF Leaked Route
+
+Gateway of last resort:
+ B E      0.0.0.0/0 [20/0]
+           via 10.1.102.0, Vlan4002
+
+ C        10.1.102.0/31
+           directly connected, Vlan4002
+```
+
+Осталось настроить NAT с route-leaking на стороне `fwBorder01`:
+```
+interface GigabitEthernet1.4001
+ ip nat inside
+!
+interface GigabitEthernet1.4002
+ ip nat inside
+!
+interface GigabitEthernet2
+ ip nat outside
+!
+ip access-list standard aclNAT:TENANT-A
+ 10 permit any
+!
+ip access-list standard aclNAT:TENANT-B
+ 10 permit any
+!
+ip nat inside source list aclNAT:TENANT-A interface GigabitEthernet2 vrf TENANT-A overload
+ip nat inside source list aclNAT:TENANT-B interface GigabitEthernet2 vrf TENANT-B overload
+!
+ip route vrf TENANT-A 0.0.0.0 0.0.0.0 10.1.10.2 global
+ip route vrf TENANT-B 0.0.0.0 0.0.0.0 10.1.10.2 global
+```
+
+Проверим со стороны `swBorderLeaf01`:
+```
+swBorderLeaf01#ping vrf TENANT-A 8.8.8.8
+PING 8.8.8.8 (8.8.8.8) 72(100) bytes of data.
+80 bytes from 8.8.8.8: icmp_seq=1 ttl=105 time=36.3 ms
+80 bytes from 8.8.8.8: icmp_seq=2 ttl=105 time=36.0 ms
+80 bytes from 8.8.8.8: icmp_seq=3 ttl=105 time=34.5 ms
+80 bytes from 8.8.8.8: icmp_seq=4 ttl=105 time=37.4 ms
+80 bytes from 8.8.8.8: icmp_seq=5 ttl=105 time=33.2 ms
+
+--- 8.8.8.8 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 111ms
+rtt min/avg/max/mdev = 33.218/35.468/37.433/1.473 ms, pipe 3, ipg/ewma 27.693/35.818 ms
+
+swBorderLeaf01#ping vrf TENANT-B 8.8.8.8
+PING 8.8.8.8 (8.8.8.8) 72(100) bytes of data.
+80 bytes from 8.8.8.8: icmp_seq=1 ttl=105 time=33.5 ms
+80 bytes from 8.8.8.8: icmp_seq=2 ttl=105 time=34.7 ms
+80 bytes from 8.8.8.8: icmp_seq=3 ttl=105 time=35.1 ms
+80 bytes from 8.8.8.8: icmp_seq=4 ttl=105 time=36.7 ms
+80 bytes from 8.8.8.8: icmp_seq=5 ttl=105 time=34.6 ms
+
+--- 8.8.8.8 ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 104ms
+rtt min/avg/max/mdev = 33.502/34.900/36.658/1.026 ms, pipe 3, ipg/ewma 26.107/34.231 ms
+```
 
 #### Настройка подключения сервера srvHost03 (L2 Multi-Home)
 Переходим к коммутаторам `swLeaf03`, `swLeaf04` и `swBorderLeaf01`. Их конфигурация опирается на описанную в части [Настройка базового функционала Underlay/Overlay](#настройка-базового-функционала-underlayoverlay) с дополнением, связанным с абонентским подключением по технологии Multi-Home:
 ```
 ```
+
+
+
+
+
+
+
+
+
+
+
+
 
 ---
 
