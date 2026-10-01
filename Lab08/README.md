@@ -62,12 +62,19 @@ no service interface inactive port-id allocation disabled
 !
 transceiver qsfp default-mode 4x10G
 !
-service routing protocols model multi-agent
+interface defaults                     !! Настраиваем сосотояние физических интерфейсов по-умолчанию
+   !! Security Off, Jumbo-frame on
+   mtu 9000                          
+   !
+   ethernet
+      shutdown                         !! Отключаем по требованиям безопасности
+!
+service routing protocols model multi-agent     !! Обязательное переключение на многоагентную архитектуру
 !
 hostname swSpine01
 dns domain Underlay.local
 !
-spanning-tree mode mstp
+spanning-tree mode mstp                !! Оставляем, чтобы не нарушить консистентность L2
 !
 system l1
    unsupported speed action error
@@ -75,6 +82,7 @@ system l1
 !
 interface Ethernet1
    description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf01:Ethernet1
+   no shutdown
    load-interval 60
    mtu 9000
    no switchport
@@ -85,6 +93,7 @@ interface Ethernet1
 !
 interface Ethernet2
    description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf02:Ethernet1
+   no shutdown
    load-interval 60
    mtu 9000
    no switchport
@@ -95,6 +104,7 @@ interface Ethernet2
 !
 interface Ethernet3
    description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf03:Ethernet1
+   no shutdown
    load-interval 60
    mtu 9000
    no switchport
@@ -105,6 +115,7 @@ interface Ethernet3
 !
 interface Ethernet4
    description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf04:Ethernet1
+   no shutdown
    load-interval 60
    mtu 9000
    no switchport
@@ -115,6 +126,7 @@ interface Ethernet4
 !
 interface Ethernet5
    description --- L3 p2p: (no VLAN, no VRF): connection to swBorderLeaf01:Ethernet1
+   no shutdown
    load-interval 60
    mtu 9000
    no switchport
@@ -124,10 +136,13 @@ interface Ethernet5
    isis network point-to-point
 !
 interface Ethernet6
+   shutdown
 !
 interface Ethernet7
+   shutdown
 !
 interface Ethernet8
+   shutdown
 !
 interface Loopback0
    description --- Loopback (no VLAN, no VRF): interface for Underlay Control-Plane
@@ -144,21 +159,22 @@ ipv6 unicast-routing
 !
 router bgp 65001
    !! Main Layer of Overlay Control-Plane
-   !! Main Layer of Overlay Control-Plane
    router-id 10.1.2.1
-   update wait-for-convergence
-   update wait-install
-   timers bgp 3 9
-   graceful-restart restart-time 300
-   graceful-restart
-   maximum-paths 16
+   update wait-for-convergence            !! Принудительно удерживать отправку BGP-апдейтов (Updates) соседям до тех пор, пока сеть полностью не сойдется (не спамить сеть промежуточными данными)
+   update wait-install                    !! Производить ожидание записи маршрутов в аппаратный FIB (предотвращает блэкхол на время записи)
+   no bgp default ipv4-unicast            !! Отключает семейство IPv4 для экономии ресурсов устройства
+   timers bgp 3 9                         !! Параметр Keepalive = 3 секунды и Holdtime = 9 секунд
+   distance bgp 20 200 200                !! Указываем административные дистанции: eBGP, iBGP, local BGP
+   graceful-restart restart-time 300      !! Указывает максимальное время рестарта BGP процесса
+   graceful-restart                       !! Требует от соседей не удалять маршруты через локальный коммутатор на время перезагрузки процесса
+   maximum-paths 16 ecmp 16
    neighbor grpLEAFS peer group
    neighbor grpLEAFS remote-as 65001
    neighbor grpLEAFS update-source Loopback0
    neighbor grpLEAFS bfd
    neighbor grpLEAFS bfd interval 100 min-rx 100 multiplier 3
    neighbor grpLEAFS route-reflector-client
-   neighbor grpLEAFS send-community
+   neighbor grpLEAFS send-community extended
    neighbor 10.1.1.1 peer group grpLEAFS
    neighbor 10.1.1.2 peer group grpLEAFS
    neighbor 10.1.1.3 peer group grpLEAFS
@@ -204,6 +220,13 @@ no aaa root
 no service interface inactive port-id allocation disabled
 !
 transceiver qsfp default-mode 4x10G
+!
+interface defaults
+   !! Security Off, Jumbo-frame on
+   mtu 9000
+   !
+   ethernet
+      shutdown
 !
 service routing protocols model multi-agent
 !
@@ -273,10 +296,12 @@ router bgp 65001
    router-id 10.1.1.1
    update wait-for-convergence
    update wait-install
+   no bgp default ipv4-unicast
    timers bgp 3 9
+   distance bgp 20 200 200
    graceful-restart restart-time 300
    graceful-restart
-   maximum-paths 16
+   maximum-paths 16 ecmp 16
    neighbor grpLEAFS peer group
    neighbor grpSPINES peer group
    neighbor grpSPINES remote-as 65001
@@ -284,7 +309,7 @@ router bgp 65001
    neighbor grpSPINES bfd
    neighbor grpSPINES bfd interval 100 min-rx 100 multiplier 3
    neighbor grpSPINES route-reflector-client
-   neighbor grpSPINES send-community
+   neighbor grpSPINES send-community extended
    neighbor 10.1.2.1 peer group grpSPINES
    neighbor 10.1.2.2 peer group grpSPINES
    neighbor 10.1.2.3 peer group grpSPINES
@@ -504,7 +529,7 @@ router bgp 65001
 
 При объявлении RP будем использовать статический режим (для EVPN/VxLAN фабрик динамический BSR практически никогда не используется) с выделенным петлевым интерфейсом `loopback255` на стороне коммутаторов уровня Spine.
 
-
+Описание VNI
 VNI!!!!!!
 
 
@@ -526,7 +551,303 @@ interface Loopback255
    ip address 10.1.255.255/32
    isis enable Underlay
    isis passive
+!
+interface Ethernet1 - 5
+   pim ipv4 sparse-mode
+!
+router pim sparse-mode
+   ipv4
+      rp address 10.1.255.255                !! Указание адреса RP PIM Anycast фабирики
+      anycast-rp 10.1.255.255 10.1.2.1       !! Настройка синхронизации PIM Anycast c swSpine01
+      anycast-rp 10.1.255.255 10.1.2.2       !! Настройка синхронизации PIM Anycast c swSpine02
+      anycast-rp 10.1.255.255 10.1.2.3       !! Настройка синхронизации PIM Anycast c swSpine03
 ```
+
+Проверим работоспособность RP:
+```
+swSpine01#show ip pim rp
+Group: 224.0.0.0/4
+  RP: 10.1.255.255
+    Uptime: 0:03:18, Expires: never, Priority: 0, Override: False
+```
+
+И перенесем данные настройки на все коммутаторы уровня Spine.
+
+На коммутаторах уровня Leaf производим следующие настройки:
+```
+interface Ethernet1 - 3
+   pim ipv4 sparse-mode
+!
+router pim sparse-mode
+   ipv4
+      rp address 10.1.255.255
+```
+
+Проверяем:
+```
+swLeaf04(config)#sh ip pim rp
+Group: 224.0.0.0/4
+  RP: 10.1.255.255
+    Uptime: 0:00:49, Expires: never, Priority: 0, Override: False
+
+swLeaf04(config)#sh ip pim neighbor
+PIM Neighbor Table for default VRF
+Neighbor Address  Interface  Uptime    Expires   Mode    Transport
+10.1.2.1          Ethernet1  00:03:03  00:01:35  sparse  datagram
+10.1.2.2          Ethernet2  00:03:03  00:01:18  sparse  datagram
+10.1.2.3          Ethernet3  00:03:02  00:01:23  sparse  datagram
+```
+
+Вся инфраструктура готова. Если посмотреть настройки VxLAN:
+```
+swBorderLeaf01(config)#sh vxlan vtep
+Remote VTEPS for Vxlan1:
+
+VTEP           Tunnel Type(s)
+-------------- --------------
+10.1.1.4       flood
+
+Total number of remote VTEPS:  1
+```
+
+увидим, что сейчас используется Ingress Replication (`flood`).
+
+```
+
+```
+
+
+```
+swBorderLeaf01(config-if-Vx1)#sh ip mroute
+PIM Bidirectional Mode Multicast Routing Table
+RPF route: U - From unicast routing table
+           M - From multicast routing table
+PIM Sparse Mode Multicast Routing Table
+Flags: E - Entry forwarding on the RPT, J - Joining to the SPT
+    R - RPT bit is set, S - SPT bit is set, L - Source is attached
+    W - Wildcard entry, X - External component interest
+    I - SG Include Join alert rcvd, P - Programmed in hardware
+    H - Joining SPT due to policy, D - Joining SPT due to protocol
+    Z - Entry marked for deletion, C - Learned from a DR via a register
+    A - Learned via Anycast RP Router, M - Learned via MSDP
+    N - May notify MSDP, K - Keepalive timer not running
+    T - Switching Incoming Interface, B - Learned via Border Router
+    V - Source is reachable via Evpn Tenant Domain
+    F - Learned via MVPN
+RPF route: U - From unicast routing table
+           M - From multicast routing table
+* - Interface has EVPN information available in the 'detail' command output
+239.1.0.6
+  10.1.1.4, 0:01:18, flags: SP
+    Incoming interface: Ethernet1
+    RPF route: [U] 10.1.1.4/32 [115/30] via 10.1.2.1
+    Outgoing interface list:
+      Vlan6*
+  10.1.1.251, 0:03:19, flags: SLP
+    Incoming interface: Loopback0
+    RPF route: [U] 10.1.1.251/32 [0/0]
+    Outgoing interface list:
+      Register
+      Ethernet3
+239.1.0.23
+  10.1.1.4, 0:01:09, flags: SP
+    Incoming interface: Ethernet2
+    RPF route: [U] 10.1.1.4/32 [115/30] via 10.1.2.2
+    Outgoing interface list:
+      Vlan23*
+  10.1.1.251, 0:02:41, flags: SLP
+    Incoming interface: Loopback0
+    RPF route: [U] 10.1.1.251/32 [0/0]
+    Outgoing interface list:
+      Register
+      Ethernet2
+239.1.0.137
+  10.1.1.4, 0:00:59, flags: E
+    Incoming interface: Null
+  10.1.1.251, 0:02:20, flags: SLP
+    Incoming interface: Loopback0
+    RPF route: [U] 10.1.1.251/32 [0/0]
+    Outgoing interface list:
+      Register
+239.1.1.37
+  10.1.1.4, 0:00:19, flags: SP
+    Incoming interface: Ethernet3
+    RPF route: [U] 10.1.1.4/32 [115/30] via 10.1.2.3
+    Outgoing interface list:
+      Vlan137*
+  10.1.1.251, 0:00:11, flags: SLP
+    Incoming interface: Loopback0
+    RPF route: [U] 10.1.1.251/32 [0/0]
+    Outgoing interface list:
+      Register
+      Ethernet2
+239.1.8.89
+  10.1.1.4, 0:00:48, flags: SP
+    Incoming interface: Ethernet1
+    RPF route: [U] 10.1.1.4/32 [115/30] via 10.1.2.1
+    Outgoing interface list:
+      Vlan889*
+  10.1.1.251, 0:02:06, flags: SLP
+    Incoming interface: Loopback0
+    RPF route: [U] 10.1.1.251/32 [0/0]
+    Outgoing interface list:
+      Register
+      Ethernet3
+239.1.10.26
+  10.1.1.4, 0:00:30, flags: SP
+    Incoming interface: Ethernet1
+    RPF route: [U] 10.1.1.4/32 [115/30] via 10.1.2.1
+    Outgoing interface list:
+      Vlan1026*
+  10.1.1.251, 0:01:49, flags: SLP
+    Incoming interface: Loopback0
+    RPF route: [U] 10.1.1.251/32 [0/0]
+    Outgoing interface list:
+      Register
+      Ethernet2
+```
+
+```
+swBorderLeaf01(config-if-Vx1)#sh vxlan vtep
+Remote VTEPS for Vxlan1:
+
+VTEP           Tunnel Type(s)
+-------------- --------------
+10.1.1.4       unicast
+
+Total number of remote VTEPS:  1
+```
+
+```
+swSpine01#sh ip pim upstream joins
+Neighbor address: 10.1.1.4
+ Via interface: Ethernet4 (10.1.2.1)
+  Group: 239.1.8.89
+    Joins:
+      10.1.1.4/32 SPT
+    Prunes:
+      No prunes included
+  Group: 239.1.0.6
+    Joins:
+      10.1.1.4/32 SPT
+    Prunes:
+      No prunes included
+  Group: 239.1.10.26
+    Joins:
+      10.1.1.4/32 SPT
+    Prunes:
+      No prunes included
+
+swSpine02#sh ip pim upstream joins
+Neighbor address: 10.1.1.4
+ Via interface: Ethernet4 (10.1.2.2)
+  Group: 239.1.0.23
+    Joins:
+      10.1.1.4/32 SPT
+    Prunes:
+      No prunes included
+Neighbor address: 10.1.1.251
+ Via interface: Ethernet5 (10.1.2.2)
+  Group: 239.1.0.23
+    Joins:
+      10.1.1.251/32 SPT
+    Prunes:
+      No prunes included
+  Group: 239.1.1.37
+    Joins:
+      10.1.1.251/32 SPT
+    Prunes:
+      No prunes included
+  Group: 239.1.10.26
+    Joins:
+      10.1.1.251/32 SPT
+    Prunes:
+      No prunes included
+
+swSpine03#sh ip pim upstream joins
+Neighbor address: 10.1.1.4
+ Via interface: Ethernet4 (10.1.2.3)
+  Group: 239.1.1.37
+    Joins:
+      10.1.1.4/32 SPT
+    Prunes:
+      No prunes included
+Neighbor address: 10.1.1.251
+ Via interface: Ethernet5 (10.1.2.3)
+  Group: 239.1.8.89
+    Joins:
+      10.1.1.251/32 SPT
+    Prunes:
+      No prunes included
+  Group: 239.1.0.6
+    Joins:
+      10.1.1.251/32 SPT
+    Prunes:
+      No prunes included
+```
+
+Разница в выводах команд `show ip pim upstream joins` между тремя Spine-коммутаторами — это абсолютно правильное, штатное поведение отлично работающей фабрики. Эта разница обусловлена тремя фундаментальными сетевыми механизмами: Anycast RP, ECMP-балансировкой в Underlay и логикой RPF (Reverse Path Forwarding) check в протоколе PIM.
+
+Поскольку адрес RP (`10.1.255.255`) настроен как Anycast на всех трех Spine'ах одновременно и анонсируется через IS-IS, каждый Leaf-коммутатор (`swLeaf04` с IP `10.1.1.4` и его сосед `swBorderLeaf01` c IP `10.1.1.251`) видит три одинаковых по стоимости пути (ECMP) до этой точки рандеву.
+Когда Leaf генерирует PIM Join-запрос для конкретной мультикаст-группы, он выполняет RPF-выбор: он берет IP-адрес RP, смотрит в свою таблицу юникаст-маршрутизации и выбирает строго одного конкретного соседа (один Spine) для отправки запроса на эту группу. Хеш-алгоритм ECMP на лифах распределяет разные группы по разным аплинкам.
+
+
+
+
+
+
+show ip pim upstream joins
+
+
+
+
+
+swSpine01#sh ip pim neighbor
+PIM Neighbor Table for default VRF
+Neighbor Address  Interface  Uptime    Expires   Mode    Transport
+10.1.1.4          Ethernet4  00:00:23  00:01:27  sparse  datagram
+10.1.1.251        Ethernet5  00:21:33  00:01:40  sparse  datagram
+
+
+
+
+
+
+
+
+swBorderLeaf01#sh int vxlan 1
+Vxlan1 is up, line protocol is up (connected)
+  Hardware is Vxlan
+  Description: --- VxLAN (no VRF): interface for Overlay Control-Plane
+  Source interface is Loopback0 and is active with 10.1.1.251
+  Listening on UDP port 4789
+  Replication/Flood Mode is headend with Flood List Source: EVPN
+  Remote MAC learning via EVPN
+  VNI mapping to VLANs
+  Static VLAN to VNI mapping is
+    [6, 1101006]      [23, 1102023]     [137, 1101137]    [889, 1102889]
+    [1026, 1101026]
+  Dynamic VLAN to VNI mapping for 'evpn' is
+    [4097, 1101000]   [4098, 1102000]
+  Note: All Dynamic VLANs used by VCS are internal VLANs.
+        Use 'show vxlan vni' for details.
+  Static VRF to VNI mapping is
+   [TENANT-A, 1101000]
+   [TENANT-B, 1102000]
+  Headend replication flood vtep list is:
+     6 10.1.1.4
+    23 10.1.1.4
+   137 10.1.1.4
+   889 10.1.1.4
+  1026 10.1.1.4
+  Shared Router MAC is 0000.0000.0000
+
+
+
+
+
+
+
 
 
 loopback255
