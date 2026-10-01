@@ -352,7 +352,7 @@ router multicast
 | Tenant A | TENANT-A | 65101 | 101 | 1101000 | 4001 |
 | Tenant B | TENANT-B | 65102 | 102 | 1102000 | 4002 |
 
-Донстройка потребуется только на стороне коммутаторов уровня Leaf:
+Донстройка потребуется только на стороне коммутаторов уровня Leaf.
 ```
 vlan 4001
    !! VLAN for L3VPN Symmetric IRB
@@ -426,7 +426,7 @@ router bgp 65001
 | Tenant B | 23 | 192.168.23.0/24 | 1102023 |
 | Tenant B | 889 | 10.1.1.0/24 | 1102889 |
 
-Настройки, связанные с L2 имеют следующий вид:
+Настройки, связанные с L2-сервисами имеют следующий вид:
 ```
 vlan 6
    name TENANT-A:VLAN006
@@ -530,9 +530,9 @@ router bgp 65001
 
 При объявлении RP будем использовать статический режим (для EVPN/VxLAN фабрик динамический BSR практически никогда не используется) с выделенным петлевым интерфейсом `loopback255` на стороне коммутаторов уровня Spine.
 
-Описание VNI
-VNI!!!!!!
+В рамках данного решения для каждого широковещательного сегмента оверлея (VNI) или группы сегментов (VLAN-Aware Bundle) выделяется уникальный адрес многоадресной рассылки (Multicast Group) из диапазона административно ограничиваемых адресов 239.0.0.0/8.
 
+Каждый VTEP-коммутатор (Leaf) осуществляет аппаратную посадку широковещательного домена на соответствующую мультикаст-группу транспортной сети. Сигнализация и построение деревьев распределения BUM-трафика обеспечиваются протоколом PIM Sparse Mode (PIM-SM).
 
 С точки зрения Underlay-маршрутизации (OSPF/IS-IS/BGP), одинаковый IP-адрес RP анонсируется всеми спайнами одновременно. Ближайшие лифы выбирают кратчайший путь (по метрике IGP или ECMP) до этого адреса.
 
@@ -542,7 +542,7 @@ VNI!!!!!!
 - **Синхронизация через PIM Anycast**: Самый простой и лаконичный способ, встроенный в сам протокол PIM. Спайны общаются между собой, используя свои **уникальные IP-адреса**, а Anycast IP используют только для обслуживания лифов. Когда на `Spine01` приходит запрос регистрации от источника (через Anycast IP), он пересылает сообщение `PIM Register` на все остальные коммутаторы Spine, перечисленные в его peer-листе.
 - Синхронизация через MSDP: Является классическим подхобом. Spine'ы устанавливают между собой TCP-соединения. Когда `swSpine01` узнает о новом источнике мультикаста, он генерирует Source-Active (SA) сообщение и отправляет его по TCP всем MSDP-соседям. Таким образом, все Spine'ы ведут идентичную базу данных активных источников.
 
-Итоговый выбор PIM-ASM cо статическим указанием IP-адреса RP на стороне коммутаторов Spine и Anycast-синхронизацией между ними:
+Итоговый выбор PIM-ASM cо статическим указанием IP-адреса RP на стороне коммутаторов Spine и Anycast-синхронизацией между ними. Сторона Spine'ов:
 ```
 ip multicast-routing
 !
@@ -572,9 +572,7 @@ Group: 224.0.0.0/4
     Uptime: 0:03:18, Expires: never, Priority: 0, Override: False
 ```
 
-И перенесем данные настройки на все коммутаторы уровня Spine.
-
-На коммутаторах уровня Leaf производим следующие настройки:
+Перенесем данные настройки на все коммутаторы уровня Spine. На коммутаторах уровня Leaf производим следующие настройки:
 ```
 interface Ethernet1 - 3
    pim ipv4 sparse-mode
@@ -582,6 +580,13 @@ interface Ethernet1 - 3
 router pim sparse-mode
    ipv4
       rp address 10.1.255.255
+!
+interface Vxlan1
+   vxlan vlan 6 flood group 239.1.0.6
+   vxlan vlan 23 flood group 239.1.0.23
+   vxlan vlan 137 flood group 239.1.1.37
+   vxlan vlan 889 flood group 239.1.8.89
+   vxlan vlan 1026 flood group 239.1.10.26
 ```
 
 Проверяем:
@@ -601,115 +606,15 @@ Neighbor Address  Interface  Uptime    Expires   Mode    Transport
 
 Вся инфраструктура готова. Если посмотреть настройки VxLAN:
 ```
-swBorderLeaf01(config)#sh vxlan vtep
+swLeaf04(config-if-Vx1)#sh vxlan vtep
 Remote VTEPS for Vxlan1:
 
-VTEP           Tunnel Type(s)
--------------- --------------
-10.1.1.4       flood
+VTEP       Tunnel Type(s)
+---------- --------------
 
-Total number of remote VTEPS:  1
-```
+Total number of remote VTEPS:  0
 
-увидим, что сейчас используется Ingress Replication (`flood`).
-
-```
-
-```
-
-
-```
-swBorderLeaf01(config-if-Vx1)#sh ip mroute
-PIM Bidirectional Mode Multicast Routing Table
-RPF route: U - From unicast routing table
-           M - From multicast routing table
-PIM Sparse Mode Multicast Routing Table
-Flags: E - Entry forwarding on the RPT, J - Joining to the SPT
-    R - RPT bit is set, S - SPT bit is set, L - Source is attached
-    W - Wildcard entry, X - External component interest
-    I - SG Include Join alert rcvd, P - Programmed in hardware
-    H - Joining SPT due to policy, D - Joining SPT due to protocol
-    Z - Entry marked for deletion, C - Learned from a DR via a register
-    A - Learned via Anycast RP Router, M - Learned via MSDP
-    N - May notify MSDP, K - Keepalive timer not running
-    T - Switching Incoming Interface, B - Learned via Border Router
-    V - Source is reachable via Evpn Tenant Domain
-    F - Learned via MVPN
-RPF route: U - From unicast routing table
-           M - From multicast routing table
-* - Interface has EVPN information available in the 'detail' command output
-239.1.0.6
-  10.1.1.4, 0:01:18, flags: SP
-    Incoming interface: Ethernet1
-    RPF route: [U] 10.1.1.4/32 [115/30] via 10.1.2.1
-    Outgoing interface list:
-      Vlan6*
-  10.1.1.251, 0:03:19, flags: SLP
-    Incoming interface: Loopback0
-    RPF route: [U] 10.1.1.251/32 [0/0]
-    Outgoing interface list:
-      Register
-      Ethernet3
-239.1.0.23
-  10.1.1.4, 0:01:09, flags: SP
-    Incoming interface: Ethernet2
-    RPF route: [U] 10.1.1.4/32 [115/30] via 10.1.2.2
-    Outgoing interface list:
-      Vlan23*
-  10.1.1.251, 0:02:41, flags: SLP
-    Incoming interface: Loopback0
-    RPF route: [U] 10.1.1.251/32 [0/0]
-    Outgoing interface list:
-      Register
-      Ethernet2
-239.1.0.137
-  10.1.1.4, 0:00:59, flags: E
-    Incoming interface: Null
-  10.1.1.251, 0:02:20, flags: SLP
-    Incoming interface: Loopback0
-    RPF route: [U] 10.1.1.251/32 [0/0]
-    Outgoing interface list:
-      Register
-239.1.1.37
-  10.1.1.4, 0:00:19, flags: SP
-    Incoming interface: Ethernet3
-    RPF route: [U] 10.1.1.4/32 [115/30] via 10.1.2.3
-    Outgoing interface list:
-      Vlan137*
-  10.1.1.251, 0:00:11, flags: SLP
-    Incoming interface: Loopback0
-    RPF route: [U] 10.1.1.251/32 [0/0]
-    Outgoing interface list:
-      Register
-      Ethernet2
-239.1.8.89
-  10.1.1.4, 0:00:48, flags: SP
-    Incoming interface: Ethernet1
-    RPF route: [U] 10.1.1.4/32 [115/30] via 10.1.2.1
-    Outgoing interface list:
-      Vlan889*
-  10.1.1.251, 0:02:06, flags: SLP
-    Incoming interface: Loopback0
-    RPF route: [U] 10.1.1.251/32 [0/0]
-    Outgoing interface list:
-      Register
-      Ethernet3
-239.1.10.26
-  10.1.1.4, 0:00:30, flags: SP
-    Incoming interface: Ethernet1
-    RPF route: [U] 10.1.1.4/32 [115/30] via 10.1.2.1
-    Outgoing interface list:
-      Vlan1026*
-  10.1.1.251, 0:01:49, flags: SLP
-    Incoming interface: Loopback0
-    RPF route: [U] 10.1.1.251/32 [0/0]
-    Outgoing interface list:
-      Register
-      Ethernet2
-```
-
-```
-swBorderLeaf01(config-if-Vx1)#sh vxlan vtep
+swBorderLeaf01#sh vxlan vtep
 Remote VTEPS for Vxlan1:
 
 VTEP           Tunnel Type(s)
@@ -719,6 +624,11 @@ VTEP           Tunnel Type(s)
 Total number of remote VTEPS:  1
 ```
 
+Как видно, режим репликации переключился с `flood` на `unicast`.
+
+Однако, несмотря на работоспособность фабрики, у меня не "завелся" Anycast RP в полной мере: не синхронизировались между собой RP расположенные на Spine'ах.
+
+Проверим подключения к мультикаст группам на стороне коммутаторов Spine:
 ```
 swSpine01#sh ip pim upstream joins
 Neighbor address: 10.1.1.4
@@ -787,98 +697,86 @@ Neighbor address: 10.1.1.251
       No prunes included
 ```
 
-Разница в выводах команд `show ip pim upstream joins` между тремя Spine-коммутаторами — это абсолютно правильное, штатное поведение отлично работающей фабрики. Эта разница обусловлена тремя фундаментальными сетевыми механизмами: Anycast RP, ECMP-балансировкой в Underlay и логикой RPF (Reverse Path Forwarding) check в протоколе PIM.
+Разница в выводах команд `show ip pim upstream joins` между тремя Spine-коммутаторами — это штатное поведение отлично работающей фабрики. Эта разница обусловлена тремя фундаментальными сетевыми механизмами: Anycast RP, ECMP-балансировкой в Underlay и логикой RPF (Reverse Path Forwarding) check в протоколе PIM.
 
 Поскольку адрес RP (`10.1.255.255`) настроен как Anycast на всех трех Spine'ах одновременно и анонсируется через IS-IS, каждый Leaf-коммутатор (`swLeaf04` с IP `10.1.1.4` и его сосед `swBorderLeaf01` c IP `10.1.1.251`) видит три одинаковых по стоимости пути (ECMP) до этой точки рандеву.
 Когда Leaf генерирует PIM Join-запрос для конкретной мультикаст-группы, он выполняет RPF-выбор: он берет IP-адрес RP, смотрит в свою таблицу юникаст-маршрутизации и выбирает строго одного конкретного соседа (один Spine) для отправки запроса на эту группу. Хеш-алгоритм ECMP на лифах распределяет разные группы по разным аплинкам.
 
+Однако, при этом, если посмотреть маршрут до группы существующего клиента, получим следующее:
+```
+swSpine01#sh ip mroute 239.1.1.37
+PIM Bidirectional Mode Multicast Routing Table
+RPF route: U - From unicast routing table
+           M - From multicast routing table
+PIM Sparse Mode Multicast Routing Table
+Flags: E - Entry forwarding on the RPT, J - Joining to the SPT
+    R - RPT bit is set, S - SPT bit is set, L - Source is attached
+    W - Wildcard entry, X - External component interest
+    I - SG Include Join alert rcvd, P - Programmed in hardware
+    H - Joining SPT due to policy, D - Joining SPT due to protocol
+    Z - Entry marked for deletion, C - Learned from a DR via a register
+    A - Learned via Anycast RP Router, M - Learned via MSDP
+    N - May notify MSDP, K - Keepalive timer not running
+    T - Switching Incoming Interface, B - Learned via Border Router
+    V - Source is reachable via Evpn Tenant Domain
+    F - Learned via MVPN
+RPF route: U - From unicast routing table
+           M - From multicast routing table
 
+swSpine02#sh ip mroute 239.1.1.37
+PIM Bidirectional Mode Multicast Routing Table
+RPF route: U - From unicast routing table
+           M - From multicast routing table
+PIM Sparse Mode Multicast Routing Table
+Flags: E - Entry forwarding on the RPT, J - Joining to the SPT
+    R - RPT bit is set, S - SPT bit is set, L - Source is attached
+    W - Wildcard entry, X - External component interest
+    I - SG Include Join alert rcvd, P - Programmed in hardware
+    H - Joining SPT due to policy, D - Joining SPT due to protocol
+    Z - Entry marked for deletion, C - Learned from a DR via a register
+    A - Learned via Anycast RP Router, M - Learned via MSDP
+    N - May notify MSDP, K - Keepalive timer not running
+    T - Switching Incoming Interface, B - Learned via Border Router
+    V - Source is reachable via Evpn Tenant Domain
+    F - Learned via MVPN
+RPF route: U - From unicast routing table
+           M - From multicast routing table
+239.1.1.37
+  10.1.1.251, 0:57:37, flags: SP
+    Incoming interface: Ethernet5
+    RPF route: [U] 10.1.1.251/32 [115/20] via 10.1.1.251
+    Outgoing interface list:
+      Ethernet4
 
+swSpine03#sh ip mroute 239.1.1.37
+PIM Bidirectional Mode Multicast Routing Table
+RPF route: U - From unicast routing table
+           M - From multicast routing table
+PIM Sparse Mode Multicast Routing Table
+Flags: E - Entry forwarding on the RPT, J - Joining to the SPT
+    R - RPT bit is set, S - SPT bit is set, L - Source is attached
+    W - Wildcard entry, X - External component interest
+    I - SG Include Join alert rcvd, P - Programmed in hardware
+    H - Joining SPT due to policy, D - Joining SPT due to protocol
+    Z - Entry marked for deletion, C - Learned from a DR via a register
+    A - Learned via Anycast RP Router, M - Learned via MSDP
+    N - May notify MSDP, K - Keepalive timer not running
+    T - Switching Incoming Interface, B - Learned via Border Router
+    V - Source is reachable via Evpn Tenant Domain
+    F - Learned via MVPN
+RPF route: U - From unicast routing table
+           M - From multicast routing table
+239.1.1.37
+  10.1.1.4, 17:24:36, flags: SP
+    Incoming interface: Ethernet4
+    RPF route: [U] 10.1.1.4/32 [115/20] via 10.1.1.4
+    Outgoing interface list:
+      Ethernet5
+```
 
+Как видно, синхронизация Anycast не работает.
 
-
-show ip pim upstream joins
-
-
-
-
-
-swSpine01#sh ip pim neighbor
-PIM Neighbor Table for default VRF
-Neighbor Address  Interface  Uptime    Expires   Mode    Transport
-10.1.1.4          Ethernet4  00:00:23  00:01:27  sparse  datagram
-10.1.1.251        Ethernet5  00:21:33  00:01:40  sparse  datagram
-
-
-
-
-
-
-
-
-swBorderLeaf01#sh int vxlan 1
-Vxlan1 is up, line protocol is up (connected)
-  Hardware is Vxlan
-  Description: --- VxLAN (no VRF): interface for Overlay Control-Plane
-  Source interface is Loopback0 and is active with 10.1.1.251
-  Listening on UDP port 4789
-  Replication/Flood Mode is headend with Flood List Source: EVPN
-  Remote MAC learning via EVPN
-  VNI mapping to VLANs
-  Static VLAN to VNI mapping is
-    [6, 1101006]      [23, 1102023]     [137, 1101137]    [889, 1102889]
-    [1026, 1101026]
-  Dynamic VLAN to VNI mapping for 'evpn' is
-    [4097, 1101000]   [4098, 1102000]
-  Note: All Dynamic VLANs used by VCS are internal VLANs.
-        Use 'show vxlan vni' for details.
-  Static VRF to VNI mapping is
-   [TENANT-A, 1101000]
-   [TENANT-B, 1102000]
-  Headend replication flood vtep list is:
-     6 10.1.1.4
-    23 10.1.1.4
-   137 10.1.1.4
-   889 10.1.1.4
-  1026 10.1.1.4
-  Shared Router MAC is 0000.0000.0000
-
-
-
-
-
-
-
-
-
-loopback255
-10.1.255.255/32
-
-
-
-
-
-
-
-Остался только 
-
-+ синхронизация между RP
-
-+ что делать с мультакаст-адресами VLAN/Bundle?
-
-
-
-
-
-
-
-
-
-!?!?!?!
-
-Type-3 inclusive multicast Ethernet tag
-
-
+На данный момент, ввиду работоспособности всей фабрики, я решил отложить эксперементы до окончательного завершения лабораторной.
 
 #### Настройка стыка с сетью Интернет
 Начну со стороны стыка с роутером-файрволом `fwBorder01`, на коммутаторе фабрики `swBorderLeaf01`.
