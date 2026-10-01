@@ -451,49 +451,39 @@ vlan 889
 vlan 1026
    name TENANT-A:VLAN026
 !
-interface Loopback101
-   description --- Loopback (no VLAN, VRF: TENANT-A): interface for Control-Plane for Tenant A
-   load-interval 60
-   ip address 10.1.0.101/32
-!
-interface Loopback102
-   description --- Loopback (no VLAN, VRF: TENANT-B): interface for Control-Plane for Tenant B
-   load-interval 60
-   ip address 10.1.0.102/32
-!
 interface Vlan6
    description --- Virtual (VLAN006, VRF: TENANT-A): interface for L3 termination
    no autostate
    vrf TENANT-A
-   ip address unnumbered Loopback101
+   ip address 172.12.23.2/24
    ip virtual-router address 172.12.23.1
 !
 interface Vlan23
    description --- Virtual (VLAN023, VRF: TENANT-B): interface for L3 termination
    no autostate
    vrf TENANT-B
-   ip address unnumbered Loopback102
+   ip address 192.168.23.2/24
    ip virtual-router address 192.168.23.1
 !
 interface Vlan137
    description --- Virtual (VLAN137, VRF: TENANT-A): interface for L3 termination
    no autostate
    vrf TENANT-A
-   ip address unnumbered Loopback101
+   ip address 192.168.12.2/24
    ip virtual-router address 192.168.12.1
 !
 interface Vlan889
    description --- Virtual (VLAN889, VRF: TENANT-B): interface for L3 termination
    no autostate
    vrf TENANT-B
-   ip address unnumbered Loopback102
+   ip address 10.1.1.2/24
    ip virtual-router address 10.1.1.1
 !
 interface Vlan1026
    description --- Virtual (VLAN1026, VRF: TENANT-A): interface for L3 termination
    no autostate
    vrf TENANT-A
-   ip address unnumbered Loopback101
+   ip address 10.128.14.2/24
    ip virtual-router address 10.128.14.1
 !
 interface Vxlan1
@@ -963,12 +953,10 @@ router bgp 65100
  timers bgp 3 9
  !
  address-family ipv4 vrf TENANT-A
-  neighbor grpLEAFS peer-group
-  neighbor grpLEAFS description --- Peer: connection between System-on-a-Stick and Leaf switches
-  neighbor grpLEAFS fall-over bfd
   neighbor 10.1.101.1 remote-as 65001
-  neighbor 10.1.101.1 peer-group grpLEAFS
+  neighbor 10.1.101.1 description --- Peer: connection between System-on-a-Stick and Leaf switches in VRF TENANT-A
   neighbor 10.1.101.1 update-source GigabitEthernet1.4001
+  neighbor 10.1.101.1 fall-over bfd
   neighbor 10.1.101.1 activate
   neighbor 10.1.101.1 default-originate
  exit-address-family
@@ -1063,7 +1051,11 @@ rtt min/avg/max/mdev = 33.502/34.900/36.658/1.026 ms, pipe 3, ipg/ewma 26.107/34
 
 #### Настройка подключения сервера srvHost03 (L2 Multi-Home)
 Переходим к коммутаторам `swLeaf03`, `swLeaf04` и `swBorderLeaf01`. Их конфигурация опирается на описанную в части [Настройка базового функционала Underlay/Overlay](#настройка-базового-функционала-underlayoverlay) с дополнением, связанным с абонентским подключением по технологии Multi-Home:
+
+на swLeaf03
 ```
+router bgp 65001
+   bgp default ipv4-unicast
 ```
 
 
@@ -1071,7 +1063,7 @@ rtt min/avg/max/mdev = 33.502/34.900/36.658/1.026 ms, pipe 3, ipg/ewma 26.107/34
 
 
 
-
+00:1c:73:00:00:01
 
 
 
@@ -1221,3 +1213,4 @@ VLAN, VNI, L3VPI, VRF
 ### Настройка фабрики
 Настройку фабрики (для удобства проверки) начнем с `swBorderLeaf01`. Удалим все настройки, связанные с OSPF, старые VLAN и все настройки
 
+00:1c:73:00:00:01
