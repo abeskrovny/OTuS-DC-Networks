@@ -241,6 +241,7 @@ system l1
 !
 interface Ethernet1
    description --- L3 p2p: (no VLAN, no VRF): connection to swSpine01:Ethernet1
+   no shutdown
    load-interval 60
    mtu 9000
    no switchport
@@ -251,6 +252,7 @@ interface Ethernet1
 !
 interface Ethernet2
    description --- L3 p2p: (no VLAN, no VRF): connection to swSpine02:Ethernet1
+   no shutdown
    load-interval 60
    mtu 9000
    no switchport
@@ -261,6 +263,7 @@ interface Ethernet2
 !
 interface Ethernet3
    description --- L3 p2p: (no VLAN, no VRF): connection to swSpine03:Ethernet1
+   no shutdown
    load-interval 60
    mtu 9000
    no switchport
@@ -270,14 +273,19 @@ interface Ethernet3
    isis network point-to-point
 !
 interface Ethernet4
+   shutdown
 !
 interface Ethernet5
+   shutdown
 !
 interface Ethernet6
+   shutdown
 !
 interface Ethernet7
+   shutdown
 !
 interface Ethernet8
+   shutdown
 !
 interface Loopback0
    description --- Loopback (no VLAN, no VRF): interface for Underlay Control-Plane
