@@ -1051,166 +1051,173 @@ rtt min/avg/max/mdev = 33.502/34.900/36.658/1.026 ms, pipe 3, ipg/ewma 26.107/34
 
 #### Настройка подключения сервера srvHost03 (L2 Multi-Home)
 Переходим к коммутаторам `swLeaf03`, `swLeaf04` и `swBorderLeaf01`. Их конфигурация опирается на описанную в части [Настройка базового функционала Underlay/Overlay](#настройка-базового-функционала-underlayoverlay) с дополнением, связанным с абонентским подключением по технологии Multi-Home:
-
-на swLeaf03
 ```
-router bgp 65001
-   bgp default ipv4-unicast
-```
-
-
-
-
-
-
-00:1c:73:00:00:01
-
-
-
-
-
-
----
-
-swLeaf04
-```
-interface Ethernet5
-   description --- Trunk (VLAN001): connection to srvHost03:Gi2
+link tracking group ltgPortChannel5       !! Создаем аварийный трекинг для интерфейса Po5
+   links minimum 2                        !! Минимум 2 аплинка к Spine'ам
+   recovery delay 60                      !! Подавление флаппинга
+!
+interface Port-Channel5
+   description --- Trunk (VLAN001): connection to srvHost03
    load-interval 60
+   switchport trunk allowed vlan 6,23,137,889,1026
    switchport mode trunk
-```
-
-srvHost03
-```
-
-```
-
-
-
-
-
-
-
-
----
-
-
-```
-vlan 4091
-   !! Interconnect VLAN for Tenant A
-   name TENANT-A:Interconnect
+   !
+   evpn ethernet-segment
+      identifier auto lacp                !! Идентификарор LACP задаем автоматически (должен быть уникален на всех соединениях данного агрегата)
+   lacp system-id 001c.7300.0005
 !
-vlan 4092
-   !! Interconnect VLAN for Tenant B
-   name TENANT-B:Interconnect
+interface Ethernet5
+   description --- Port-channel 5 (Multi-Home): connection to srvHost03:Gi2
+   no shutdown
+   load-interval 60
+   channel-group 5 mode active
+   link tracking group ltgPortChannel5 downstream
 !
-```
-
-
-!!!
-
-maximum-paths 16
-
-После этого можно будет настроить подключение к роутеру `fwBorder01`:
-```
-
-```
-
-
-
-
-
-Далее, настройки
-
-
-
----
-
 router bgp 65001
-   vrf TENANT-A
-      rd 10.1.1.1:65101
-      route-target import evpn 65101:101
-      route-target export evpn 65101:101
+   address-family evpn
+      route type ethernet-segment route-target auto
+```
 
----
+На абонентской стороне (`srvHost03`) настройки следующие:
+```
+hostname srvHost03
+!
+ip domain name local
+!
+ip vrf VLAN006
+ description --- VRF (TENANT-A): vrf for VLAN006
+!
+ip vrf VLAN023
+ description --- VRF (TENANT-B): vrf for VLAN023
+!
+ip vrf VLAN1026
+ description --- VRF (TENANT-A): vrf for VLAN1026
+!
+ip vrf VLAN137
+ description --- VRF (TENANT-A): vrf for VLAN137
+!
+ip vrf VLAN889
+ description --- VRF (TENANT-B): vrf for VLAN889
+!
+lldp run
+cdp run
+!
+interface Port-channel1
+ description --- Trunk (VLAN001): conneciotn to fabric
+ no ip address
+ load-interval 60
+ no negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface Port-channel1.6
+ description --- Virtual (VLAN006, TENANT-A): "TENANT-A:VLAN6"
+ encapsulation dot1Q 6
+ ip vrf forwarding VLAN006
+ ip address 172.12.23.103 255.255.255.0
+!
+interface Port-channel1.23
+ description --- Virtual (VLAN023, VRF: TENANT-B): "TENANT-B:VLAN023"
+ encapsulation dot1Q 23
+ ip vrf forwarding VLAN023
+ ip address 192.168.23.103 255.255.255.0
+!
+interface Port-channel1.137
+ description --- Virtual (VLAN137, VRF: TENANT-A): "TENANT-A:VLAN137"
+ encapsulation dot1Q 137
+ ip vrf forwarding VLAN137
+ ip address 192.168.12.103 255.255.255.0
+!
+interface Port-channel1.889
+ description --- Virtual (VLAN889, VRF: TENANT-B): "TENANT-B:VLAN889"
+ encapsulation dot1Q 889
+ ip vrf forwarding VLAN889
+ ip address 10.1.1.103 255.255.255.0
+!
+interface Port-channel1.1026
+ description --- Virtual (VLAN1026, TENANT-A): "TENANT-A:VLAN1026"
+ encapsulation dot1Q 1026
+ ip vrf forwarding VLAN1026
+ ip address 10.128.14.103 255.255.255.0
+!
+interface GigabitEthernet1
+ description --- Port-channel (Multi-Home): connection to swLeaf03:Ethernet5
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet2
+ description --- Port-channel (Multi-Home): connection to swLeaf04:Ethernet5
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet3
+ description --- Port-channel (Multi-Home): connection to swBorderLeaf01:Ethernet5
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+ip route vrf VLAN137 0.0.0.0 0.0.0.0 192.168.12.1
+ip route vrf VLAN1026 0.0.0.0 0.0.0.0 10.128.14.1
+ip route vrf VLAN006 0.0.0.0 0.0.0.0 172.12.23.1
+ip route vrf VLAN023 0.0.0.0 0.0.0.0 192.168.23.1
+ip route vrf VLAN889 0.0.0.0 0.0.0.0 10.1.1.1
+```
 
+Проверим на стороне `srvHost03`:
+```
+srvHost03#show interfaces port-channel 1
+Port-channel1 is up, line protocol is up
+  Hardware is GEChannel, address is 001e.e6f3.35c0 (bia 001e.e6f3.35c0)
+  Description: --- Trunk (VLAN001): conneciotn to fabric
+  MTU 1500 bytes, BW 3000000 Kbit/sec, DLY 10 usec,
+     reliability 255/255, txload 1/255, rxload 1/255
+  Encapsulation 802.1Q Virtual LAN, Vlan ID  1., loopback not set
+  Keepalive set (10 sec)
+  ARP type: ARPA, ARP Timeout 04:00:00
+    No. of active members in this channel: 3
+        Member 0 : GigabitEthernet1 , Full-duplex, 1000Mb/s
+        Member 1 : GigabitEthernet2 , Full-duplex, 1000Mb/s
+        Member 2 : GigabitEthernet3 , Full-duplex, 1000Mb/s
+    No. of PF_JUMBO supported members in this channel : 3
+  Last input 00:00:00, output 00:06:50, output hang never
+  Last clearing of "show interface" counters never
+  Input queue: 0/1125/0/0 (size/max/drops/flushes); Total output drops: 0
+  Queueing strategy: fifo
+  Output queue: 0/120 (size/max)
+  1 minute input rate 0 bits/sec, 0 packets/sec
+  1 minute output rate 0 bits/sec, 0 packets/sec
+     8419 packets input, 921734 bytes, 0 no buffer
+     Received 0 broadcasts (0 IP multicasts)
+     0 runts, 0 giants, 0 throttles
+     0 input errors, 0 CRC, 0 frame, 0 overrun, 0 ignored
+     0 watchdog, 0 multicast, 0 pause input
+     295 packets output, 26062 bytes, 0 underruns
+     Output 0 broadcasts (0 IP multicasts)
+     0 output errors, 0 collisions, 0 interface resets
+     20 unknown protocol drops
+     0 babbles, 0 late collision, 0 deferred
+     0 lost carrier, 0 no carrier, 0 pause output
+     0 output buffer failures, 0 output buffers swapped out
+```
 
+и выход в интернет:
+```
+srvHost03#ping vrf VLAN137 8.8.8.8
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 8.8.8.8, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 56/69/82 ms
+```
 
-VLAN могут быть произвольными, как и IP в VRF - это прирогатива заказчика. Для выхода мы используем nat
-
-VNI - 110000 VLAN100
-VLAN101 - VNI110011
-
-VNI -120000 VLAN200
-VLAN201 - VNI120021
-
-Allowed range is: 1-1677
-10010000
-1- POD1
-001 - Tenant1
-0000 - VLAN
-
-куда совать L3VNI для каждого тенанта
-
-
-
-
-
-
-
-
----
-
-1. Ускорение сходимости и оптимизация трафика
-Помимо уже настроенного advertisement-interval 0, для EVPN оверлея критически важны следующие параметры:
-• update-wait-time 0 и update-wait-install 0
-По умолчанию Arista после перезагрузки или падения сессии выдерживает паузу перед отправкой и установкой EVPN-маршрутов, чтобы собрать полную картину сети. В лабах и отказоустойчивых фабриках эту задержку отключают для мгновенного старта.
-• next-hop-unchanged (только если оверлей на iBGP)
-Если ваши Spine и Leaf находятся в одной AS (iBGP), то Spine-коммутаторы при пересылке EVPN Route Type-2/3 не должны менять IP Next-Hop на свой собственный. Иначе Leaf-коммутаторы попытаются построить VXLAN-туннель до Spine, а не до целевого Leaf.
-2. Защита от «мигания» сети (Route Flapping)
-• bgp convergence-time 0
-Ускоряет время, через которое Arista считает сеть сошедшейся, убирая внутренние системные задержки планировщика BGP.
-• evpn route-flap-damping
-Если на каком-то сервере начнет «мигать» сетевой интерфейс, он завалит всю фабрику миллионами EVPN-апдейтов (MAC/IP Route Type-2). Этот механизм временно штрафует и замораживает нестабильные маршруты на Leaf, защищая Control Plane коммутаторов.
-3. Масштабирование и оптимизация памяти
-• graceful-restart (или long-lived-graceful-restart)
-Позволяет Control Plane (процессу BGP) перезагрузиться (например, при обновлении Arista EOS) без прерывания передачи трафика через Data Plane (чип коммутатора). Соседи будут удерживать маршруты, зная, что коммутатор скоро вернется.
-
-router bgp 65001
-   ! -- Общий тюнинг процесса BGP --
-   bgp convergence-time 0
-   update-wait-time 0
-   update-wait-install 0
-   graceful-restart restart-time 120
-   
-   ! -- Настройка группы соседей --
-   neighbor OVERLAY-PEERS peer group
-   neighbor OVERLAY-PEERS remote-as 65001  <-- (Если iBGP, для eBGP укажите remote-as external)
-   neighbor OVERLAY-PEERS update-source Loopback0
-   neighbor OVERLAY-PEERS send-community
-   neighbor OVERLAY-PEERS fall-over bfd
-   neighbor OVERLAY-PEERS advertisement-interval 0
-
-
-
-Чтобы при падении (отвале) BGP-соседа маршрутизатор Arista отправлял EVPN-апдейты (а именно — отзывы маршрутов, Withdrawals) незамедлительно, вам нужно отключить задержку, которая называется MRAI (Min Route Advertisement Interval).
-
-
-
-===
-У каждого из них существуют свои
-
-VLAN, VNI, L3VPI, VRF
-
-*Таблица 1: Настройки арендаторов*
-
-| Hostname | Lb0 IPv4 | AFI | Area ID | System ID | NSEL |
-
-===
-
-Будем считать, что в DC расположены два клиента: TenantA и TenantB и их сервисы могут мигрировать на любой из хостов (в лабораторной - хост-роутер). У каждого из клиентов есть некоторое количество L2 сегментов. Связь между клиентами возможна только через файрвол rtBorder01, стоящим также на стыке с интернетом.
-
-### Настройка фабрики
-Настройку фабрики (для удобства проверки) начнем с `swBorderLeaf01`. Удалим все настройки, связанные с OSPF, старые VLAN и все настройки
-
-00:1c:73:00:00:01
+#### Настройка подключения сервера srvHost01 (MLAG))
