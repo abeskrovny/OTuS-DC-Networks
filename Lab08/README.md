@@ -1049,7 +1049,7 @@ PING 8.8.8.8 (8.8.8.8) 72(100) bytes of data.
 rtt min/avg/max/mdev = 33.502/34.900/36.658/1.026 ms, pipe 3, ipg/ewma 26.107/34.231 ms
 ```
 
-#### Настройка подключения сервера srvHost03 (L2 Multi-Home)
+#### Настройка подключения сервера `srvHost03` (L2 Multi-Home)
 Переходим к коммутаторам `swLeaf03`, `swLeaf04` и `swBorderLeaf01`. Их конфигурация опирается на описанную в части [Настройка базового функционала Underlay/Overlay](#настройка-базового-функционала-underlayoverlay) с дополнением, связанным с абонентским подключением по технологии Multi-Home:
 ```
 link tracking group ltgPortChannel5       !! Создаем аварийный трекинг для интерфейса Po5
@@ -1220,4 +1220,586 @@ Sending 5, 100-byte ICMP Echos to 8.8.8.8, timeout is 2 seconds:
 Success rate is 100 percent (5/5), round-trip min/avg/max = 56/69/82 ms
 ```
 
-#### Настройка подключения сервера srvHost01 (MLAG))
+#### Настройка подключения сервера `srvHost01` (MLAG))
+Произведем настройку MLAG-пары `swLeaf01` и `swLeaf02`. Их стартовая конфигурация аналогична описанной в части [Настройка базового функционала Underlay/Overlay](#настройка-базового-функционала-underlayoverlay) со следующими отличиями:
+```
+interface Loopback1                    !! Задаем общий интерфейс MLAG-пары
+   description --- Loopback (no VLAN, no VRF): interface for MLAG source
+   load-interval 60
+   ip address 10.1.0.1/32
+   isis enable Underlay
+   isis network point-to-point
+```
+
+Далее, собираем MLAG. Я буду использовать для Peer-Link'а два интерфейса, объединенных в агрегат. На самом агрегате будет поднять L3 как для обслуживания MLAG, так и для пульса:
+```
+vlan 4094                              !! VLAN для L2 Peer-Link
+   name MLAG:PEER-CONTROL
+   trunk group tgrMLAG:PEER-LINK       !! Ограничиваем использование VLAN только данной группой
+!
+interface Port-Channel4094
+   description --- Trunk (VLAN001): MLAG Peer Link
+   load-interval 60
+   switchport mode trunk
+   switchport trunk group tgrMLAG:PEER-LINK
+   no shutdown
+!
+interface ethernet 7 - 8
+   description --- Port-channel 4094 (LACP): MLAG Peer Link
+   no shutdown
+   load-interval 60
+   channel-group 4094 mode active
+!
+interface Vlan4094
+   description --- Virtual (VLAN4094, no VRF): L3 MLAG Peer Link
+   load-interval 60
+   no autostate
+   ip address 10.1.0.2/31
+!
+mlag configuration
+   !! MLAG: swLeaf01-swLeaf02
+   domain-id mlag01
+   local-interface Vlan4094
+   peer-address 10.1.0.2
+   peer-address heartbeat 10.1.0.2
+   peer-link Port-Channel4094
+```
+
+После дублирования на второе плечо можно посмотреть состояние:
+```
+swLeaf01#sh mlag
+MLAG Configuration:
+domain-id                          :              mlag01
+local-interface                    :            Vlan4094
+peer-address                       :            10.1.0.3
+peer-link                          :    Port-Channel4094
+hb-peer-address                    :            10.1.0.3
+peer-config                        :        inconsistent
+
+MLAG Status:
+state                              :              Active
+negotiation status                 :           Connected
+peer-link status                   :                  Up
+local-int status                   :                  Up
+system-id                          :   52:00:00:03:37:66
+dual-primary detection             :            Disabled
+dual-primary interface errdisabled :               False
+
+MLAG Ports:
+Disabled                           :                   0
+Configured                         :                   0
+Inactive                           :                   0
+Active-partial                     :                   0
+Active-full                        :                   0
+```
+
+Настрою абонентское подключение к роутеру-сервер `srvHost01` со стороны MLAG-пары (настройки идентичны):
+```
+interface Port-Channel4
+   description --- Trunk (VLAN001): connection to srvHost01
+   load-interval 60
+   switchport trunk allowed vlan 6,23,137,889,1026
+   switchport mode trunk
+   mlag 4
+!
+interface Ethernet4
+   description --- Port-channel 4 (MLAG): connection to srvHost01:Gi1
+   no shutdown
+   load-interval 60
+   channel-group 4 mode active
+```
+
+Настроим абонентское подключение (`srvHost01`):
+```
+hostname srvHost01
+!
+ip domain name local
+!
+ip vrf VLAN006
+ description --- VRF (TENANT-A): vrf for VLAN006
+!
+ip vrf VLAN023
+ description --- VRF (TENANT-B): vrf for VLAN023
+!
+ip vrf VLAN1026
+ description --- VRF (TENANT-A): vrf for VLAN1026
+!
+ip vrf VLAN137
+ description --- VRF (TENANT-A): vrf for VLAN137
+!
+ip vrf VLAN889
+ description --- VRF (TENANT-B): vrf for VLAN889
+!
+lldp run
+!
+interface Port-channel1
+ description --- Trunk (VLAN001): connection to MLAG: swLeaf01, swLeaf02
+ no ip address
+ load-interval 60
+ no negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface Port-channel1.6
+ description --- Virtual (VLAN006, TENANT-A): "TENANT-A:VLAN6"
+ encapsulation dot1Q 6
+ ip vrf forwarding VLAN006
+ ip address 172.12.23.101 255.255.255.0
+!
+interface Port-channel1.23
+ description --- Virtual (VLAN023, VRF: TENANT-B): "TENANT-B:VLAN023"
+ encapsulation dot1Q 23
+ ip vrf forwarding VLAN023
+ ip address 192.168.23.101 255.255.255.0
+!
+interface Port-channel1.137
+ description --- Virtual (VLAN137, VRF: TENANT-A): "TENANT-A:VLAN137"
+ encapsulation dot1Q 137
+ ip vrf forwarding VLAN137
+ ip address 192.168.12.101 255.255.255.0
+!
+interface Port-channel1.889
+ description --- Virtual (VLAN889, VRF: TENANT-B): "TENANT-B:VLAN889"
+ encapsulation dot1Q 889
+ ip vrf forwarding VLAN889
+ ip address 10.1.1.101 255.255.255.0
+!
+interface Port-channel1.1026
+ description --- Virtual (VLAN1026, TENANT-A): "TENANT-A:VLAN1026"
+ encapsulation dot1Q 1026
+ ip vrf forwarding VLAN1026
+ ip address 10.128.14.101 255.255.255.0
+!
+interface GigabitEthernet1
+ description --- Port-channel 1 (MLAG): connection to swLeaf01:Ethernet4
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet2
+ description --- Port-channel 1 (MLAG): connection to swLeaf02:Ethernet4
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+```
+
+Проверяем на произвольном VLAN:
+```
+srvHost01#ping vrf VLAN137 8.8.8.8
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 8.8.8.8, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 51/93/236 ms
+
+srvHost01#show interfaces port-channel 1
+Port-channel1 is up, line protocol is up
+  Hardware is GEChannel, address is 001e.e5bc.0fc0 (bia 001e.e5bc.0fc0)
+  Description: --- Trunk (VLAN001): connection to MLAG: swLeaf01, swLeaf02
+  MTU 1500 bytes, BW 2000000 Kbit/sec, DLY 10 usec,
+     reliability 255/255, txload 1/255, rxload 1/255
+  Encapsulation 802.1Q Virtual LAN, Vlan ID  1., loopback not set
+  Keepalive set (10 sec)
+  ARP type: ARPA, ARP Timeout 04:00:00
+    No. of active members in this channel: 2
+        Member 0 : GigabitEthernet1 , Full-duplex, 1000Mb/s
+        Member 1 : GigabitEthernet2 , Full-duplex, 1000Mb/s
+    No. of PF_JUMBO supported members in this channel : 2
+  Last input 00:00:01, output 00:00:13, output hang never
+  Last clearing of "show interface" counters never
+  Input queue: 0/750/60593/0 (size/max/drops/flushes); Total output drops: 0
+  Queueing strategy: fifo
+  Output queue: 0/80 (size/max)
+  1 minute input rate 0 bits/sec, 0 packets/sec
+  1 minute output rate 0 bits/sec, 0 packets/sec
+     1019 packets input, 112049 bytes, 0 no buffer
+     Received 0 broadcasts (0 IP multicasts)
+     0 runts, 0 giants, 0 throttles
+...
+```
+
+На стороне любого из плечей MLAG:
+```
+swLeaf01#show mlag interfaces
+                                                                   local/remote
+mlag  desc                                  state  local   remote        status
+----- ------------------------------- ------------ ------ -------- ------------
+   4  --- Trunk (VLAN001): connectio  active-full    Po4      Po4         up/up
+
+swLeaf01#show mlag config-sanity
+No per interface configuration inconsistencies found.
+
+Global configuration inconsistencies:
+    Feature                    Attribute       Local value    Peer value
+-------------- ---------------------------- ----------------- ----------
+   bridging        admin-state vlan 4001            active             -
+   bridging        admin-state vlan 4002            active             -
+   bridging       mac-learning vlan 4001              True             -
+   bridging       mac-learning vlan 4002              True             -
+
+swLeaf01#show mlag subinterfaces
+No MLAG sub-interfaces configured
+
+swLeaf01#show mlag tunnel
+Received packets: 946
+Transmitted packets: 478
+Decapsulated packets: 946
+Encapsulated packets: 478
+FrameType                  DecapPkts       EncapPkts
+IEEE BPDU                          0               0
+IGMP                               0               0
+IGMPv3                             0               0
+PIM                                0               0
+PVST BPDU                          0               0
+```
+
+#### Настройка подключения сервера `srvHost02` (L3)
+Настроим, сначала, сторону фабрики. На коммутаторе `swLeaf02` произведем следующие изменения:
+```
+interface Ethernet6
+   description --- Trunk (VLAN001): connection to srvHost02:Gi1
+   no shutdown
+   load-interval 60
+   no switchport
+!
+interface Ethernet6.4001
+   description --- L3 p2p: (VLAN4001, VRF: TENANT-A): connection to VRF TENANT-A
+   load-interval 60
+   encapsulation dot1q vlan 4001
+   vrf TENANT-A
+   ip address 10.1.101.2/31
+!
+interface Ethernet6.4002
+   description --- L3 p2p: (VLAN4002, VRF: TENANT-B): connection to VRF TENANT-B
+   load-interval 60
+   encapsulation dot1q vlan 4002
+   vrf TENANT-B
+   ip address 10.1.102.2/31
+!
+router bgp 65001
+   neighbor grpONEARMSYSTEMS peer group
+   neighbor grpONEARMSYSTEMS bfd
+   neighbor grpONEARMSYSTEMS bfd interval 100 min-rx 100 multiplier 3
+   !
+   address-family ipv4
+      neighbor grpONEARMSYSTEMS activate
+   !
+   vrf TENANT-A
+      maximum-paths 16 ecmp 16
+      neighbor 10.1.101.3 peer group grpONEARMSYSTEMS
+      neighbor 10.1.101.3 remote-as 65101
+      neighbor 10.1.101.3 update-source Ethernet6.4001
+      neighbor 10.1.101.3 default-originate
+   !
+   vrf TENANT-B
+      maximum-paths 16 ecmp 16
+      neighbor 10.1.102.3 peer group grpONEARMSYSTEMS
+      neighbor 10.1.102.3 remote-as 65101
+      neighbor 10.1.102.3 update-source Ethernet6.4002
+      neighbor 10.1.102.3 default-originate
+```
+
+Аналогичные настройки и на стороне `swLeaf03` с учетом p2p адресов.
+```
+interface Ethernet6
+   description --- Trunk (VLAN001): connection to srvHost02:Gi1
+   no shutdown
+   load-interval 60
+   no switchport
+!
+interface Ethernet6.4001
+   description --- L3 p2p: (VLAN4001, VRF: TENANT-A): connection to VRF TENANT-A
+   load-interval 60
+   encapsulation dot1q vlan 4001
+   vrf TENANT-A
+   ip address 10.1.101.4/31
+!
+interface Ethernet6.4002
+   description --- L3 p2p: (VLAN4002, VRF: TENANT-B): connection to VRF TENANT-B
+   load-interval 60
+   encapsulation dot1q vlan 4002
+   vrf TENANT-B
+   ip address 10.1.102.4/31
+!
+router bgp 65001
+   neighbor grpONEARMSYSTEMS peer group
+   neighbor grpONEARMSYSTEMS bfd
+   neighbor grpONEARMSYSTEMS bfd interval 100 min-rx 100 multiplier 3
+   !
+   address-family ipv4
+      neighbor grpONEARMSYSTEMS activate
+   !
+   vrf TENANT-A
+      maximum-paths 16 ecmp 16
+      neighbor 10.1.101.5 peer group grpONEARMSYSTEMS
+      neighbor 10.1.101.5 remote-as 65101
+      neighbor 10.1.101.5 update-source Ethernet6.4001
+      neighbor 10.1.101.5 default-originate
+   !
+   vrf TENANT-B
+      neighbor 10.1.102.5 peer group grpONEARMSYSTEMS
+      neighbor 10.1.102.5 remote-as 65101
+      neighbor 10.1.102.5 update-source Ethernet6.4002
+      neighbor 10.1.102.5 default-originate
+```
+
+После этого, необходимо настроить сервер-роутер `srvHost02`:
+```
+hostname srvHost02
+!
+ip domain name local
+!
+vrf definition TENANT-A
+ description --- VRF: Tenant A RIB
+ rd 65101:101
+ !
+ address-family ipv4
+  route-target export 65101:101
+  route-target import 65101:101
+ exit-address-family
+!
+vrf definition TENANT-B
+ description --- VRF: Tenant B RIB
+ rd 65102:102
+ !
+ address-family ipv4
+  route-target export 65102:102
+  route-target import 65102:102
+ exit-address-family
+!
+lldp run
+!
+interface Loopback101               !! Сеть "за сервером" в VRF TENANT-A
+ description --- Loopback 101 (no VLAN, VRF: TENANT-A): LAN for VRF TENANT-A
+ vrf forwarding TENANT-A
+ ip address 10.101.10.1 255.255.255.0
+ load-interval 60
+!
+interface Loopback102               !! Сеть "за сервером" в VRF TENANT-B
+ description --- Loopback 102 (no VLAN, VRF: TENANT-B): LAN for VRF TENANT-B
+ vrf forwarding TENANT-B
+ ip address 10.102.10.1 255.255.255.0
+ load-interval 60
+!
+interface GigabitEthernet1
+ description --- Trunk (VLAN001): connection to swLeaf02:Ethernet6
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet1.4001
+ description --- L3 p2p: (VLAN4001, VRF: TENANT-A): connection to VRF TENANT-A
+ encapsulation dot1Q 4001
+ vrf forwarding TENANT-A
+ ip address 10.1.101.3 255.255.255.254
+ bfd interval 100 min_rx 100 multiplier 3
+!
+interface GigabitEthernet1.4002
+ description --- L3 p2p: (VLAN4002, VRF: TENANT-B): connection to VRF TENANT-B
+ encapsulation dot1Q 4002
+ vrf forwarding TENANT-B
+ ip address 10.1.102.3 255.255.255.254
+ bfd interval 100 min_rx 100 multiplier 3
+!
+interface GigabitEthernet2
+ description --- Trunk (VLAN001): connection to swLeaf03:Ethernet6
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet2.4001
+ description --- L3 p2p: (VLAN4001, VRF: TENANT-A): connection to VRF TENANT-A
+ encapsulation dot1Q 4001
+ vrf forwarding TENANT-A
+ ip address 10.1.101.5 255.255.255.254
+ bfd interval 100 min_rx 100 multiplier 3
+!
+interface GigabitEthernet2.4002
+ description --- L3 p2p: (VLAN4002, VRF: TENANT-B): connection to VRF TENANT-B
+ encapsulation dot1Q 4002
+ vrf forwarding TENANT-B
+ ip address 10.1.102.5 255.255.255.254
+ bfd interval 100 min_rx 100 multiplier 3
+!
+router bgp 65101
+ bgp router-id 10.1.100.2
+ bgp log-neighbor-changes
+ bgp update-delay 1
+ bgp graceful-restart restart-time 300
+ bgp graceful-restart
+ timers bgp 3 9
+ maximum-paths 16
+ !
+ address-family ipv4 vrf TENANT-A
+  network 10.101.10.0 mask 255.255.255.0
+  neighbor 10.1.101.2 remote-as 65001
+  neighbor 10.1.101.2 description --- Peer: connection to fabric
+  neighbor 10.1.101.2 update-source GigabitEthernet1.4001
+  neighbor 10.1.101.2 fall-over bfd
+  neighbor 10.1.101.2 activate
+  neighbor 10.1.101.4 remote-as 65001
+  neighbor 10.1.101.4 description --- Peer: connection to fabric
+  neighbor 10.1.101.4 update-source GigabitEthernet2.4001
+  neighbor 10.1.101.4 fall-over bfd
+  neighbor 10.1.101.4 activate
+  maximum-paths 16
+ exit-address-family
+ !
+ address-family ipv4 vrf TENANT-B
+  network 10.102.10.0 mask 255.255.255.0
+  neighbor 10.1.102.2 remote-as 65001
+  neighbor 10.1.102.2 description --- Peer: connection to fabric
+  neighbor 10.1.102.2 update-source GigabitEthernet1.4002
+  neighbor 10.1.102.2 fall-over bfd
+  neighbor 10.1.102.2 activate
+  neighbor 10.1.102.4 remote-as 65001
+  neighbor 10.1.102.4 description --- Peer: connection to fabric
+  neighbor 10.1.102.4 update-source GigabitEthernet2.4002
+  neighbor 10.1.102.4 fall-over bfd
+  neighbor 10.1.102.4 activate
+  maximum-paths 16
+ exit-address-family
+```
+
+После настройки, проверим состояние таблиц в обоих VRF:
+```
+srvHost02#sh ip route vrf TENANT-A
+
+Routing Table: TENANT-A
+Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP
+       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area
+       N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2
+       E1 - OSPF external type 1, E2 - OSPF external type 2, m - OMP
+       n - NAT, Ni - NAT inside, No - NAT outside, Nd - NAT DIA
+       i - IS-IS, su - IS-IS summary, L1 - IS-IS level-1, L2 - IS-IS level-2
+       ia - IS-IS inter area, * - candidate default, U - per-user static route
+       H - NHRP, G - NHRP registered, g - NHRP registration summary
+       o - ODR, P - periodic downloaded static route, l - LISP
+       a - application route
+       + - replicated route, % - next hop override, p - overrides from PfR
+       & - replicated local route overrides by connected
+
+Gateway of last resort is 10.1.101.4 to network 0.0.0.0
+
+B*    0.0.0.0/0 [20/0] via 10.1.101.4, 00:05:22
+                [20/0] via 10.1.101.2, 00:05:22
+      10.0.0.0/8 is variably subnetted, 9 subnets, 3 masks
+B        10.1.101.0/31 [20/0] via 10.1.101.4, 00:05:22
+                       [20/0] via 10.1.101.2, 00:05:22
+C        10.1.101.2/31 is directly connected, GigabitEthernet1.4001
+L        10.1.101.3/32 is directly connected, GigabitEthernet1.4001
+C        10.1.101.4/31 is directly connected, GigabitEthernet2.4001
+L        10.1.101.5/32 is directly connected, GigabitEthernet2.4001
+C        10.101.10.0/24 is directly connected, Loopback101
+L        10.101.10.1/32 is directly connected, Loopback101
+B        10.128.14.0/24 [20/0] via 10.1.101.4, 00:05:22
+                        [20/0] via 10.1.101.2, 00:05:22
+B        10.128.14.103/32 [20/0] via 10.1.101.2, 00:29:22
+      172.12.0.0/16 is variably subnetted, 2 subnets, 2 masks
+B        172.12.23.0/24 [20/0] via 10.1.101.4, 00:05:22
+                        [20/0] via 10.1.101.2, 00:05:22
+B        172.12.23.103/32 [20/0] via 10.1.101.2, 00:29:22
+      192.168.12.0/24 is variably subnetted, 2 subnets, 2 masks
+B        192.168.12.0/24 [20/0] via 10.1.101.4, 00:05:22
+                         [20/0] via 10.1.101.2, 00:05:22
+B        192.168.12.103/32 [20/0] via 10.1.101.2, 00:29:22
+
+srvHost02#sh ip route vrf TENANT-B
+
+Routing Table: TENANT-B
+Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP
+       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area
+       N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2
+       E1 - OSPF external type 1, E2 - OSPF external type 2, m - OMP
+       n - NAT, Ni - NAT inside, No - NAT outside, Nd - NAT DIA
+       i - IS-IS, su - IS-IS summary, L1 - IS-IS level-1, L2 - IS-IS level-2
+       ia - IS-IS inter area, * - candidate default, U - per-user static route
+       H - NHRP, G - NHRP registered, g - NHRP registration summary
+       o - ODR, P - periodic downloaded static route, l - LISP
+       a - application route
+       + - replicated route, % - next hop override, p - overrides from PfR
+       & - replicated local route overrides by connected
+
+Gateway of last resort is 10.1.102.4 to network 0.0.0.0
+
+B*    0.0.0.0/0 [20/0] via 10.1.102.4, 00:06:00
+                [20/0] via 10.1.102.2, 00:06:00
+      10.0.0.0/8 is variably subnetted, 9 subnets, 3 masks
+B        10.1.1.0/24 [20/0] via 10.1.102.4, 00:06:00
+                     [20/0] via 10.1.102.2, 00:06:00
+B        10.1.1.103/32 [20/0] via 10.1.102.2, 00:30:00
+B        10.1.102.0/31 [20/0] via 10.1.102.4, 00:06:00
+                       [20/0] via 10.1.102.2, 00:06:00
+C        10.1.102.2/31 is directly connected, GigabitEthernet1.4002
+L        10.1.102.3/32 is directly connected, GigabitEthernet1.4002
+C        10.1.102.4/31 is directly connected, GigabitEthernet2.4002
+L        10.1.102.5/32 is directly connected, GigabitEthernet2.4002
+C        10.102.10.0/24 is directly connected, Loopback102
+L        10.102.10.1/32 is directly connected, Loopback102
+      192.168.23.0/24 is variably subnetted, 2 subnets, 2 masks
+B        192.168.23.0/24 [20/0] via 10.1.102.4, 00:06:00
+                         [20/0] via 10.1.102.2, 00:06:00
+B        192.168.23.103/32 [20/0] via 10.1.102.2, 00:30:00
+```
+
+Все замечательно. Проверим связанность:
+```
+srvHost02# ping vrf TENANT-A 8.8.8.8 source loopback 101
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 8.8.8.8, timeout is 2 seconds:
+Packet sent with a source address of 10.101.10.1
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 76/83/99 ms
+
+srvHost02# ping vrf TENANT-B 8.8.8.8 source loopback 102
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 8.8.8.8, timeout is 2 seconds:
+Packet sent with a source address of 10.102.10.1
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 57/78/121 ms
+
+srvHost02# ping vrf TENANT-A 10.128.14.101 source loopback 101
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 10.128.14.101, timeout is 2 seconds:
+Packet sent with a source address of 10.101.10.1
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 32/55/93 ms
+
+srvHost02# ping vrf TENANT-A 10.128.14.103 source loopback 101
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 10.128.14.103, timeout is 2 seconds:
+Packet sent with a source address of 10.101.10.1
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 11/30/81 m
+```
+
+Ну и проверим существование EVPN маршрутов типа 5:
+```
+swLeaf02#show bgp evpn route-type ip-prefix ipv4
+BGP routing table information for VRF default
+Router identifier 10.1.1.2, local AS number 65001
+Route status codes: * - valid, > - active, S - Stale, E - ECMP head, e - ECMP
+                    c - Contributing to ECMP, % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  LocPref Weight  Path
+ * >Ec    RD: 10.1.1.251:101 ip-prefix 0.0.0.0/0
+                                 10.1.1.251            -       100     0       65100 i Or-ID: 10.1.1.251 C-LST: 10.1.2.2
+ *  ec    RD: 10.1.1.251:101 ip-prefix 0.0.0.0/0
+                                 10.1.1.251            -       100     0       65100 i Or-ID: 10.1.1.251 C-LST: 10.1.2.3 10.1.1.4 10.1.2.2
+ * >      RD: 10.1.1.251:102 ip-prefix 0.0.0.0/0
+                                 10.1.1.251            -       100     0       65100 i Or-ID: 10.1.1.251 C-LST: 10.1.2.2
+ * >      RD: 10.1.1.2:102 ip-prefix 10.1.1.0/24
+                                 -                     -       -       0       i
+...
+```
