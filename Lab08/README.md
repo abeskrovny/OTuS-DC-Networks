@@ -1811,3 +1811,517 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
                                  -                     -       -       0       i
 ...
 ```
+
+#### Дополнительная задача (ликинг между VRF)
+Итак, необходимо на стороне роутера на палке `fwBorder01` устроить контроллируемую утечку маршрутов между двумя отдельными подсетями.
+
+Я выбираю со стороны VRF `TENANT-A` `VLAN137` c адресацией `192.168.12.0/24` и со стороны VRF `TENANT-B` `VLAN889` с адресацией `10.1.1.0/24`. Эти сети должны иметь связанность между собой через внешний роутер.
+
+Стоя на роутере `fwBorder01` просмотрим маршруты, полученные через BGP со всеми атрибутами:
+```
+fwBorder01#show bgp vpnv4 unicast all
+BGP table version is 261, local router ID is 10.1.100.1
+Status codes: s suppressed, d damped, h history, * valid, > best, i - internal,
+              r RIB-failure, S Stale, m multipath, b backup-path, f RT-Filter,
+              x best-external, a additional-path, c RIB-compressed,
+              t secondary path, L long-lived-stale,
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+     Network          Next Hop            Metric LocPrf Weight Path
+Route Distinguisher: 65101:101 (default for vrf TENANT-A)
+      0.0.0.0          0.0.0.0                                0 i
+ r>   10.1.101.0/31    10.1.101.1                             0 65001 i
+ *>   10.1.101.2/31    10.1.101.1                             0 65001 i
+ *>   10.1.101.4/31    10.1.101.1                             0 65001 i
+ *>   10.101.10.0/24   10.1.101.1                             0 65001 65101 i
+ *>   10.128.14.0/24   10.1.101.1                             0 65001 i
+ *>   172.12.23.0/24   10.1.101.1                             0 65001 i
+ *>   192.168.12.0     10.1.101.1                             0 65001 i
+Route Distinguisher: 65102:102 (default for vrf TENANT-B)
+      0.0.0.0          0.0.0.0                                0 i
+ *>   10.1.1.0/24      10.1.102.1                             0 65001 i
+ r>   10.1.102.0/31    10.1.102.1                             0 65001 i
+     Network          Next Hop            Metric LocPrf Weight Path
+ *>   10.1.102.2/31    10.1.102.1                             0 65001 i
+ *>   10.1.102.4/31    10.1.102.1                             0 65001 i
+ *>   10.102.10.0/24   10.1.102.1                             0 65001 65101 i
+ *>   192.168.23.0     10.1.102.1                             0 65001 i
+```
+
+Здесь мы видим, что требуемые сетки приходят, но приходят они разными RD. Фактически, нам нужно в каждом из VRF отловить нужные маршруты, промаркировать им RT c новым значением и импортировать отобранные записи в RIB соответствующего VRF.
+
+Начнем с VRF TENANT-A. Смотрим более детально направление:
+```
+fwBorder01#show bgp vpnv4 unicast all 192.168.12.0
+BGP routing table entry for 65101:101:192.168.12.0/24, version 245
+Paths: (1 available, best #1, table TENANT-A)
+  Not advertised to any peer
+  Refresh Epoch 1
+  65001
+    10.1.101.1 (via vrf TENANT-A) from 10.1.101.1 (10.1.0.101)
+      Origin IGP, localpref 100, valid, external, best
+      Extended Community: RT:65101:101
+      rx pathid: 0, tx pathid: 0x0
+      Updated on Oct 2 2026 14:24:57 UTC
+BGP routing table entry for 65102:102:0.0.0.0/0, version 28
+Paths: (1 available, no best path)
+  Advertised to update-groups:
+     16
+  Refresh Epoch 1
+  Local, (default-originate)
+    0.0.0.0 (via default) from 0.0.0.0 (10.1.100.1)
+      Origin IGP, localpref 100, external
+      rx pathid: 0, tx pathid: 0x0
+      Updated on Oct 1 2026 15:02:29 UTC
+```
+
+Как видно из вывода, мы получили следующий RT: `Extended Community: RT:65101:101`. Отберем его и допишем в него `RT:65102:102`:
+```
+ip prefix-list lstLEAKING:TENANT-A seq 5 permit 192.168.12.0/24      !! Описываем сети для утечки из VRF TENANT-A
+!
+route-map rmapLEAKING:TENANT-A permit 10
+ match ip address prefix-list lstLEAKING:TENANT-A     !! Отбираем сети утекающие сети
+ set extcommunity rt 65102:102                        !! Переписываем им RT целевой таблицы
+!
+route-map rmapLEAKING:TENANT-A permit 20              !! Остальные пропускаем
+!
+vrf definition TENANT-A
+ !
+ address-family ipv4
+  export map rmapLEAKING:TENANT-A                     !! Экспортируем через созданный route-map
+  exit-address-family
+!
+router bgp 65100
+ address-family vpnv4                                 !! Семейство, необходимое для ликинга
+ exit-address-family
+```
+
+Перезапускаем процесс BGP на роутере:
+```
+clear bgp vpnv4 unicast *
+```
+
+и смотрим результат в таблице TENANT-B:
+```
+fwBorder01#show ip route vrf TENANT-B bgp
+
+Routing Table: TENANT-B
+Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP
+       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area
+       N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2
+       E1 - OSPF external type 1, E2 - OSPF external type 2, m - OMP
+       n - NAT, Ni - NAT inside, No - NAT outside, Nd - NAT DIA
+       i - IS-IS, su - IS-IS summary, L1 - IS-IS level-1, L2 - IS-IS level-2
+       ia - IS-IS inter area, * - candidate default, U - per-user static route
+       H - NHRP, G - NHRP registered, g - NHRP registration summary
+       o - ODR, P - periodic downloaded static route, l - LISP
+       a - application route
+       + - replicated route, % - next hop override, p - overrides from PfR
+       & - replicated local route overrides by connected
+
+Gateway of last resort is 10.1.10.2 to network 0.0.0.0
+
+      10.0.0.0/8 is variably subnetted, 6 subnets, 3 masks
+B        10.1.1.0/24 [20/0] via 10.1.102.1, 00:00:19
+B        10.1.102.2/31 [20/0] via 10.1.102.1, 00:00:19
+B        10.1.102.4/31 [20/0] via 10.1.102.1, 00:00:19
+B        10.102.10.0/24 [20/0] via 10.1.102.1, 00:00:19
+B     192.168.12.0/24 [20/0] via 10.1.101.1 (TENANT-A), 00:00:19
+B     192.168.23.0/24 [20/0] via 10.1.102.1, 00:00:19
+```
+
+Здесь отчетливо видна строка с ликингом сети `192.168.12.0/24 [20/0] via 10.1.101.1 (TENANT-A), 00:00:19`. 
+
+Проверим, не нарушили ли мы чего:
+```
+fwBorder01#show bgp vpnv4 unicast all
+BGP table version is 21, local router ID is 10.1.100.1
+Status codes: s suppressed, d damped, h history, * valid, > best, i - internal,
+              r RIB-failure, S Stale, m multipath, b backup-path, f RT-Filter,
+              x best-external, a additional-path, c RIB-compressed,
+              t secondary path, L long-lived-stale,
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+     Network          Next Hop            Metric LocPrf Weight Path
+Route Distinguisher: 65101:101 (default for vrf TENANT-A)
+      0.0.0.0          0.0.0.0                                0 i
+ r>   10.1.101.0/31    10.1.101.1                             0 65001 i
+ *>   10.1.101.2/31    10.1.101.1                             0 65001 i
+ *>   10.1.101.4/31    10.1.101.1                             0 65001 i
+ *>   10.101.10.0/24   10.1.101.1                             0 65001 65101 i
+ *>   10.128.14.0/24   10.1.101.1                             0 65001 i
+ *>   172.12.23.0/24   10.1.101.1                             0 65001 i
+ *>   192.168.12.0     10.1.101.1                             0 65001 i
+Route Distinguisher: 65102:102 (default for vrf TENANT-B)
+      0.0.0.0          0.0.0.0                                0 i
+ *>   10.1.1.0/24      10.1.102.1                             0 65001 i
+ r>   10.1.102.0/31    10.1.102.1                             0 65001 i
+     Network          Next Hop            Metric LocPrf Weight Path
+ *>   10.1.102.2/31    10.1.102.1                             0 65001 i
+ *>   10.1.102.4/31    10.1.102.1                             0 65001 i
+ *>   10.102.10.0/24   10.1.102.1                             0 65001 65101 i
+ *>   192.168.12.0     10.1.101.1                             0 65001 i
+ *>   192.168.23.0     10.1.102.1                             0 65001 i
+```
+
+Отлично! Сделаем обратный лик (из VRF TENANT-B в TENANT-A):
+```
+ip prefix-list lstLEAKING:TENANT-B seq 5 permit 10.1.1.0/24
+!
+route-map rmapLEAKING:TENANT-B permit 10
+ match ip address prefix-list lstLEAKING:TENANT-B
+ set extcommunity rt 65101:101
+!
+vrf definition TENANT-B
+ description --- VRF: Tenant B RIB
+ rd 65102:102
+ !
+ address-family ipv4
+  export map rmapLEAKING:TENANT-2
+  route-target export 65102:102
+  route-target import 65102:102
+ exit-address-family
+```
+
+Перезапускаем BGP и проверяем связанность:
+```
+srvHost03#ping vrf VLAN889 192.168.12.103
+Type escape sequence to abort.
+Sending 5, 100-byte ICMP Echos to 192.168.12.103, timeout is 2 seconds:
+!!!!!
+Success rate is 100 percent (5/5), round-trip min/avg/max = 31/46/61 ms
+```
+
+При этом таблицы маршрутизации в них следующие:
+```
+fwBorder01#sh ip route vrf TENANT-A
+
+Routing Table: TENANT-A
+Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP
+       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area
+       N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2
+       E1 - OSPF external type 1, E2 - OSPF external type 2, m - OMP
+       n - NAT, Ni - NAT inside, No - NAT outside, Nd - NAT DIA
+       i - IS-IS, su - IS-IS summary, L1 - IS-IS level-1, L2 - IS-IS level-2
+       ia - IS-IS inter area, * - candidate default, U - per-user static route
+       H - NHRP, G - NHRP registered, g - NHRP registration summary
+       o - ODR, P - periodic downloaded static route, l - LISP
+       a - application route
+       + - replicated route, % - next hop override, p - overrides from PfR
+       & - replicated local route overrides by connected
+
+Gateway of last resort is 10.1.10.2 to network 0.0.0.0
+
+S*    0.0.0.0/0 [1/0] via 10.1.10.2
+      10.0.0.0/8 is variably subnetted, 7 subnets, 3 masks
+B        10.1.1.0/24 [20/0] via 10.1.102.1 (TENANT-B), 01:02:13
+C        10.1.101.0/31 is directly connected, GigabitEthernet1.4001
+L        10.1.101.0/32 is directly connected, GigabitEthernet1.4001
+B        10.1.101.2/31 [20/0] via 10.1.101.1, 01:02:13
+B        10.1.101.4/31 [20/0] via 10.1.101.1, 01:02:13
+B        10.101.10.0/24 [20/0] via 10.1.101.1, 01:02:13
+B        10.128.14.0/24 [20/0] via 10.1.101.1, 01:02:13
+      172.12.0.0/24 is subnetted, 1 subnets
+B        172.12.23.0 [20/0] via 10.1.101.1, 01:02:13
+B     192.168.12.0/24 [20/0] via 10.1.101.1, 01:02:13
+fwBorder01#sh ip route vrf TENANT-B
+fwBorder01#sh ip route vrf TENANT-B
+
+Routing Table: TENANT-B
+Codes: L - local, C - connected, S - static, R - RIP, M - mobile, B - BGP
+       D - EIGRP, EX - EIGRP external, O - OSPF, IA - OSPF inter area
+       N1 - OSPF NSSA external type 1, N2 - OSPF NSSA external type 2
+       E1 - OSPF external type 1, E2 - OSPF external type 2, m - OMP
+       n - NAT, Ni - NAT inside, No - NAT outside, Nd - NAT DIA
+       i - IS-IS, su - IS-IS summary, L1 - IS-IS level-1, L2 - IS-IS level-2
+       ia - IS-IS inter area, * - candidate default, U - per-user static route
+       H - NHRP, G - NHRP registered, g - NHRP registration summary
+       o - ODR, P - periodic downloaded static route, l - LISP
+       a - application route
+       + - replicated route, % - next hop override, p - overrides from PfR
+       & - replicated local route overrides by connected
+
+Gateway of last resort is 10.1.10.2 to network 0.0.0.0
+
+S*    0.0.0.0/0 [1/0] via 10.1.10.2
+      10.0.0.0/8 is variably subnetted, 6 subnets, 3 masks
+B        10.1.1.0/24 [20/0] via 10.1.102.1, 01:02:17
+C        10.1.102.0/31 is directly connected, GigabitEthernet1.4002
+L        10.1.102.0/32 is directly connected, GigabitEthernet1.4002
+B        10.1.102.2/31 [20/0] via 10.1.102.1, 01:02:17
+B        10.1.102.4/31 [20/0] via 10.1.102.1, 01:02:17
+B        10.102.10.0/24 [20/0] via 10.1.102.1, 01:02:17
+B     192.168.12.0/24 [20/0] via 10.1.101.1 (TENANT-A), 01:02:17
+B     192.168.23.0/24 [20/0] via 10.1.102.1, 01:02:17
+```
+
+Передают в фабрику роутер `fwBorder01` следующие маршруты:
+```
+fwBorder01#show bgp vrf TENANT-A neighbors 10.1.101.1 advertised-routes
+% Command accepted but obsolete, unreleased or unsupported; see documentation.
+
+BGP table version is 26, local router ID is 10.1.100.1
+Status codes: s suppressed, d damped, h history, * valid, > best, i - internal,
+              r RIB-failure, S Stale, m multipath, b backup-path, f RT-Filter,
+              x best-external, a additional-path, c RIB-compressed,
+              t secondary path, L long-lived-stale,
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+Originating default network 0.0.0.0
+
+     Network          Next Hop            Metric LocPrf Weight Path
+Route Distinguisher: 65101:101 (default for vrf TENANT-A)
+ *>   10.1.1.0/24      10.1.102.1                             0 65001 i
+
+Total number of prefixes 1
+
+fwBorder01#show bgp vrf TENANT-B neighbors 10.1.102.1 advertised-routes
+% Command accepted but obsolete, unreleased or unsupported; see documentation.
+
+BGP table version is 26, local router ID is 10.1.100.1
+Status codes: s suppressed, d damped, h history, * valid, > best, i - internal,
+              r RIB-failure, S Stale, m multipath, b backup-path, f RT-Filter,
+              x best-external, a additional-path, c RIB-compressed,
+              t secondary path, L long-lived-stale,
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI validation codes: V valid, I invalid, N Not found
+
+Originating default network 0.0.0.0
+
+     Network          Next Hop            Metric LocPrf Weight Path
+Route Distinguisher: 65102:102 (default for vrf TENANT-B)
+ *>   192.168.12.0     10.1.101.1                             0 65001 i
+```
+
+А на коммутаторе `swBorderLeaf01` имеем следующую картину:
+```
+swBorderLeaf01#sh bgp summary vrf all
+BGP summary information for VRF default
+Router identifier 10.1.1.251, local AS number 65001
+Neighbor          AS Session State AFI/SAFI                AFI/SAFI State   NLRI Rcd   NLRI Acc
+-------- ----------- ------------- ----------------------- -------------- ---------- ----------
+10.1.2.1       65001 Established   IPv4 Unicast            Advertised              0          0
+10.1.2.1       65001 Established   L2VPN EVPN              Negotiated             71         71
+10.1.2.2       65001 Established   IPv4 Unicast            Advertised              0          0
+10.1.2.2       65001 Established   L2VPN EVPN              Negotiated             62         62
+10.1.2.3       65001 Established   IPv4 Unicast            Advertised              0          0
+10.1.2.3       65001 Established   L2VPN EVPN              Negotiated             72         72
+
+BGP summary information for VRF TENANT-A
+Router identifier 10.1.0.101, local AS number 65001
+Neighbor            AS Session State AFI/SAFI                AFI/SAFI State   NLRI Rcd   NLRI Acc
+---------- ----------- ------------- ----------------------- -------------- ---------- ----------
+10.1.101.0       65100 Established   IPv4 Unicast            Negotiated              1          1
+
+BGP summary information for VRF TENANT-B
+Router identifier 10.1.0.102, local AS number 65001
+Neighbor            AS Session State AFI/SAFI                AFI/SAFI State   NLRI Rcd   NLRI Acc
+---------- ----------- ------------- ----------------------- -------------- ---------- ----------
+10.1.102.0       65100 Established   IPv4 Unicast            Negotiated              1          1
+```
+
+Но Arista на входе суммаризирует его до `0.0.0.0/0`:
+```
+swBorderLeaf01#sh ip bgp neighbors 10.1.101.0 received-routes vrf TENANT-A
+BGP routing table information for VRF TENANT-A
+Router identifier 10.1.0.101, local AS number 65001
+Route status codes: s - suppressed contributor, * - valid, > - active, E - ECMP head, e - ECMP
+                    S - Stale, c - Contributing to ECMP, b - backup, L - labeled-unicast
+                    % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+RPKI Origin Validation codes: V - valid, I - invalid, U - unknown
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  AIGP       LocPref Weight  Path
+ * >      0.0.0.0/0              10.1.101.0            -       -          -       -       65100 i
+```
+
+Хотя, при отдаче DG это вполне понятная ситуация. Состояние EVPN маршрутов типа 5 имеет следующий вид:
+```
+swBorderLeaf01#show bgp evpn route-type ip-prefix ipv4
+BGP routing table information for VRF default
+Router identifier 10.1.1.251, local AS number 65001
+Route status codes: * - valid, > - active, S - Stale, E - ECMP head, e - ECMP
+                    c - Contributing to ECMP, % - Pending best path selection
+Origin codes: i - IGP, e - EGP, ? - incomplete
+AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
+
+          Network                Next Hop              Metric  LocPref Weight  Path
+ * >      RD: 10.1.1.251:101 ip-prefix 0.0.0.0/0
+                                 -                     -       100     0       65100 i
+ * >      RD: 10.1.1.251:102 ip-prefix 0.0.0.0/0
+                                 -                     -       100     0       65100 i
+ * >Ec    RD: 10.1.1.2:102 ip-prefix 10.1.1.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.2:102 ip-prefix 10.1.1.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.2:102 ip-prefix 10.1.1.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.2
+ * >Ec    RD: 10.1.1.3:102 ip-prefix 10.1.1.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.3:102 ip-prefix 10.1.1.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.3:102 ip-prefix 10.1.1.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.4:102 ip-prefix 10.1.1.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.4:102 ip-prefix 10.1.1.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.1 10.1.1.2 10.1.2.2
+ *  ec    RD: 10.1.1.4:102 ip-prefix 10.1.1.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.2
+ * >      RD: 10.1.1.251:102 ip-prefix 10.1.1.0/24
+                                 -                     -       -       0       i
+ * >      RD: 10.1.1.251:101 ip-prefix 10.1.101.0/31
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.1.2:101 ip-prefix 10.1.101.2/31
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.2:101 ip-prefix 10.1.101.2/31
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.2:101 ip-prefix 10.1.101.2/31
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.3:101 ip-prefix 10.1.101.4/31
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.3:101 ip-prefix 10.1.101.4/31
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.3:101 ip-prefix 10.1.101.4/31
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >      RD: 10.1.1.251:102 ip-prefix 10.1.102.0/31
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.1.2:102 ip-prefix 10.1.102.2/31
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.2:102 ip-prefix 10.1.102.2/31
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.2:102 ip-prefix 10.1.102.2/31
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.3:102 ip-prefix 10.1.102.4/31
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.3:102 ip-prefix 10.1.102.4/31
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.3:102 ip-prefix 10.1.102.4/31
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.2:101 ip-prefix 10.101.10.0/24
+                                 10.1.0.1              0       100     0       65101 i Or-ID: 10.1.1.2 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.2:101 ip-prefix 10.101.10.0/24
+                                 10.1.0.1              0       100     0       65101 i Or-ID: 10.1.1.2 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.2:101 ip-prefix 10.101.10.0/24
+                                 10.1.0.1              0       100     0       65101 i Or-ID: 10.1.1.2 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.3:101 ip-prefix 10.101.10.0/24
+                                 10.1.1.3              0       100     0       65101 i Or-ID: 10.1.1.3 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.3:101 ip-prefix 10.101.10.0/24
+                                 10.1.1.3              0       100     0       65101 i Or-ID: 10.1.1.3 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.3:101 ip-prefix 10.101.10.0/24
+                                 10.1.1.3              0       100     0       65101 i Or-ID: 10.1.1.3 C-LST: 10.1.2.2 10.1.1.2 10.1.2.3
+ * >Ec    RD: 10.1.1.2:102 ip-prefix 10.102.10.0/24
+                                 10.1.0.1              0       100     0       65101 i Or-ID: 10.1.1.2 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.2:102 ip-prefix 10.102.10.0/24
+                                 10.1.0.1              0       100     0       65101 i Or-ID: 10.1.1.2 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.2:102 ip-prefix 10.102.10.0/24
+                                 10.1.0.1              0       100     0       65101 i Or-ID: 10.1.1.2 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.3:102 ip-prefix 10.102.10.0/24
+                                 10.1.1.3              0       100     0       65101 i Or-ID: 10.1.1.3 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.3:102 ip-prefix 10.102.10.0/24
+                                 10.1.1.3              0       100     0       65101 i Or-ID: 10.1.1.3 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.3:102 ip-prefix 10.102.10.0/24
+                                 10.1.1.3              0       100     0       65101 i Or-ID: 10.1.1.3 C-LST: 10.1.2.2 10.1.1.2 10.1.2.3
+ * >Ec    RD: 10.1.1.1:101 ip-prefix 10.128.14.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.1 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.1:101 ip-prefix 10.128.14.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.1 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.1:101 ip-prefix 10.128.14.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.1 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.2:101 ip-prefix 10.128.14.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.2:101 ip-prefix 10.128.14.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.2:101 ip-prefix 10.128.14.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.3:101 ip-prefix 10.128.14.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.3:101 ip-prefix 10.128.14.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.3:101 ip-prefix 10.128.14.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.2 10.1.1.2 10.1.2.3
+ * >Ec    RD: 10.1.1.4:101 ip-prefix 10.128.14.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.4:101 ip-prefix 10.128.14.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.4:101 ip-prefix 10.128.14.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.2
+ * >      RD: 10.1.1.251:101 ip-prefix 10.128.14.0/24
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.1.1:101 ip-prefix 172.12.23.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.1 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.1:101 ip-prefix 172.12.23.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.1 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.1:101 ip-prefix 172.12.23.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.1 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.2:101 ip-prefix 172.12.23.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.2:101 ip-prefix 172.12.23.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.2:101 ip-prefix 172.12.23.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.3:101 ip-prefix 172.12.23.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.3:101 ip-prefix 172.12.23.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.3:101 ip-prefix 172.12.23.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.2 10.1.1.2 10.1.2.3
+ * >Ec    RD: 10.1.1.4:101 ip-prefix 172.12.23.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.4:101 ip-prefix 172.12.23.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.4:101 ip-prefix 172.12.23.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.2
+ * >      RD: 10.1.1.251:101 ip-prefix 172.12.23.0/24
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.1.1:101 ip-prefix 192.168.12.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.1 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.1:101 ip-prefix 192.168.12.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.1 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.1:101 ip-prefix 192.168.12.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.1 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.2:101 ip-prefix 192.168.12.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.2:101 ip-prefix 192.168.12.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.2:101 ip-prefix 192.168.12.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.3:101 ip-prefix 192.168.12.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.3:101 ip-prefix 192.168.12.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.3:101 ip-prefix 192.168.12.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.2 10.1.1.2 10.1.2.3
+ * >Ec    RD: 10.1.1.4:101 ip-prefix 192.168.12.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.4:101 ip-prefix 192.168.12.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.4:101 ip-prefix 192.168.12.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.2
+ * >      RD: 10.1.1.251:101 ip-prefix 192.168.12.0/24
+                                 -                     -       -       0       i
+ * >Ec    RD: 10.1.1.2:102 ip-prefix 192.168.23.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.2:102 ip-prefix 192.168.23.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.1
+ *  ec    RD: 10.1.1.2:102 ip-prefix 192.168.23.0/24
+                                 10.1.0.1              -       100     0       i Or-ID: 10.1.1.2 C-LST: 10.1.2.2
+ * >Ec    RD: 10.1.1.3:102 ip-prefix 192.168.23.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.3:102 ip-prefix 192.168.23.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.1 10.1.1.2 10.1.2.3
+ *  ec    RD: 10.1.1.3:102 ip-prefix 192.168.23.0/24
+                                 10.1.1.3              -       100     0       i Or-ID: 10.1.1.3 C-LST: 10.1.2.2 10.1.1.4 10.1.2.3
+ * >Ec    RD: 10.1.1.4:102 ip-prefix 192.168.23.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.3
+ *  ec    RD: 10.1.1.4:102 ip-prefix 192.168.23.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.1 10.1.1.2 10.1.2.2
+ *  ec    RD: 10.1.1.4:102 ip-prefix 192.168.23.0/24
+                                 10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.2
+ * >      RD: 10.1.1.251:102 ip-prefix 192.168.23.0/24
+                                 -                     -       -       0       i
+```
