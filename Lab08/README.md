@@ -1980,7 +1980,7 @@ vrf definition TENANT-B
  rd 65102:102
  !
  address-family ipv4
-  export map rmapLEAKING:TENANT-2
+  export map rmapLEAKING:TENANT-B
   route-target export 65102:102
   route-target import 65102:102
  exit-address-family
