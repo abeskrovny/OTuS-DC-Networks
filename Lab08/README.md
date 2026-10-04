@@ -11,6 +11,19 @@
    - [Настройка подключения сервера `srvHost01` (MLAG)](#настройка-подключения-сервера-srvhost01-mlag)
    - [Настройка подключения сервера `srvHost02` (L3)](#настройка-подключения-сервера-srvhost02-l3)
    - [Дополнительная задача (ликинг между VRF)](#дополнительная-задача-ликинг-между-vrf)
+- [Финальная конфигурация системы](#финальная-конфигурация-системы)
+   - [Коммутатор `swSpine01`](#коммутатор-swspine01)
+   - [Коммутатор `swSpine02`](#коммутатор-swspine02)
+   - [Коммутатор `swSpine03`](#коммутатор-swspine03)
+   - [Коммутатор `swLeaf01`](#коммутатор-swleaf01)
+   - [Коммутатор `swLeaf02`](#коммутатор-swleaf02)
+   - [Коммутатор `swLeaf03`](#коммутатор-swleaf03)
+   - [Коммутатор `swLeaf04`](#коммутатор-swleaf04)
+   - [Коммутатор `swBorderLeaf01`](#коммутатор-swborderleaf01)
+   - [Коммутатор `srvHost01`](#сервер-srvhost01)
+   - [Коммутатор `srvHost02`](#сервер-srvhost02)
+   - [Коммутатор `srvHost03`](#сервер-srvhost03)
+   - [Коммутатор `fwBorder01`](#сервер-fwborder01)
 
 ### Условие задачи
 В этой самостоятельной работе мы ожидаем, что вы самостоятельно:
@@ -2325,4 +2338,2872 @@ AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Li
                                  10.1.1.4              -       100     0       i Or-ID: 10.1.1.4 C-LST: 10.1.2.2
  * >      RD: 10.1.1.251:102 ip-prefix 192.168.23.0/24
                                  -                     -       -       0       i
+```
+
+### Финальная конфигурация системы
+
+#### Коммутатор `swSpine01`:
+```
+! Command: show running-config
+! device: swSpine01 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+interface defaults
+   !! Security Off, Jumbo-frame on
+   mtu 9000
+   !
+   ethernet
+      shutdown
+!
+service routing protocols model multi-agent
+!
+hostname swSpine01
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+interface Ethernet1
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf01:Ethernet1
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet2
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf02:Ethernet1
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet3
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf03:Ethernet1
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet4
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf04:Ethernet1
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet5
+   description --- L3 p2p: (no VLAN, no VRF): connection to swBorderLeaf01:Ethernet1
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet6
+   shutdown
+!
+interface Ethernet7
+   shutdown
+!
+interface Ethernet8
+   shutdown
+!
+interface Loopback0
+   description --- Loopback (no VLAN, no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.2.1/32
+   isis enable Underlay
+   isis passive
+!
+interface Loopback255
+   description --- Loopback (no VLAN, no VRF): interface for VIP Anycast PIM-ASM
+   load-interval 60
+   ip address 10.1.255.255/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+ip routing
+!
+ipv6 unicast-routing
+!
+router bgp 65001
+   !! Main Layer of Overlay Control-Plane
+   !! Main Layer of Overlay Control-Plane
+   router-id 10.1.2.1
+   update wait-for-convergence
+   update wait-install
+   no bgp default ipv4-unicast
+   timers bgp 3 9
+   distance bgp 20 200 200
+   graceful-restart restart-time 300
+   graceful-restart
+   maximum-paths 16
+   neighbor grpLEAFS peer group
+   neighbor grpLEAFS remote-as 65001
+   neighbor grpLEAFS update-source Loopback0
+   neighbor grpLEAFS bfd
+   neighbor grpLEAFS bfd interval 100 min-rx 100 multiplier 3
+   neighbor grpLEAFS route-reflector-client
+   neighbor grpLEAFS send-community extended
+   neighbor 10.1.1.1 peer group grpLEAFS
+   neighbor 10.1.1.2 peer group grpLEAFS
+   neighbor 10.1.1.3 peer group grpLEAFS
+   neighbor 10.1.1.4 peer group grpLEAFS
+   neighbor 10.1.1.251 peer group grpLEAFS
+   !
+   address-family evpn
+      neighbor grpLEAFS activate
+      neighbor grpLEAFS next-hop-unchanged
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.0001.00
+   router-id ipv4 10.1.0.1
+   is-type level-2
+   log-adjacency-changes
+   set-overload-bit on-startup 300
+   !
+   address-family ipv4 unicast
+      maximum-paths 16
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      routing
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router pim sparse-mode
+   ipv4
+      rp address 10.1.255.255 239.0.0.0/8
+      anycast-rp 10.1.255.255 10.1.2.1
+      anycast-rp 10.1.255.255 10.1.2.2
+      anycast-rp 10.1.255.255 10.1.2.3
+      register local-interface Loopback0
+!
+end
+```
+
+#### Коммутатор `swSpine02`:
+```
+! Command: show running-config
+! device: swSpine02 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+interface defaults
+   !! Security Off, Jumbo-frame on
+   mtu 9000
+   !
+   ethernet
+      shutdown
+!
+service routing protocols model multi-agent
+!
+hostname swSpine02
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+interface Ethernet1
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf01:Ethernet2
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet2
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf02:Ethernet2
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet3
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf03:Ethernet2
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet4
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf04:Ethernet2
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet5
+   description --- L3 p2p: (no VLAN, no VRF): connection to swBorderLeaf01:Ethernet2
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet6
+   shutdown
+!
+interface Ethernet7
+   shutdown
+!
+interface Ethernet8
+   shutdown
+!
+interface Loopback0
+   description --- Loopback (no VLAN, no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.2.2/32
+   isis enable Underlay
+   isis passive
+!
+interface Loopback255
+   description --- Loopback (no VLAN, no VRF): interface for VIP Anycast PIM-ASM
+   load-interval 60
+   ip address 10.1.255.255/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+ip routing
+!
+ipv6 unicast-routing
+!
+router bgp 65001
+   !! Main Layer of Overlay Control-Plane
+   router-id 10.1.2.2
+   update wait-for-convergence
+   update wait-install
+   no bgp default ipv4-unicast
+   timers bgp 3 9
+   distance bgp 20 200 200
+   graceful-restart restart-time 300
+   graceful-restart
+   maximum-paths 16 ecmp 16
+   neighbor grpLEAFS peer group
+   neighbor grpLEAFS remote-as 65001
+   neighbor grpLEAFS update-source Loopback0
+   neighbor grpLEAFS bfd
+   neighbor grpLEAFS bfd interval 100 min-rx 100 multiplier 3
+   neighbor grpLEAFS route-reflector-client
+   neighbor grpLEAFS send-community extended
+   neighbor 10.1.1.1 peer group grpLEAFS
+   neighbor 10.1.1.2 peer group grpLEAFS
+   neighbor 10.1.1.3 peer group grpLEAFS
+   neighbor 10.1.1.4 peer group grpLEAFS
+   neighbor 10.1.1.251 peer group grpLEAFS
+   !
+   address-family evpn
+      neighbor grpLEAFS activate
+      neighbor grpLEAFS next-hop-unchanged
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.0002.00
+   router-id ipv4 10.1.0.2
+   is-type level-2
+   log-adjacency-changes
+   set-overload-bit on-startup 300
+   !
+   address-family ipv4 unicast
+      maximum-paths 16
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      routing
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router pim sparse-mode
+   ipv4
+      rp address 10.1.255.255 239.0.0.0/8
+      anycast-rp 10.1.255.255 10.1.2.1
+      anycast-rp 10.1.255.255 10.1.2.2
+      anycast-rp 10.1.255.255 10.1.2.3
+      register local-interface Loopback0
+!
+end
+```
+
+#### Коммутатор `swSpine03`:
+```
+! Command: show running-config
+! device: swSpine03 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+interface defaults
+   !! Security Off, Jumbo-frame on
+   mtu 9000
+   !
+   ethernet
+      shutdown
+!
+service routing protocols model multi-agent
+!
+hostname swSpine03
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+interface Ethernet1
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf01:Ethernet3
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet2
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf02:Ethernet3
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet3
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf03:Ethernet3
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet4
+   description --- L3 p2p: (no VLAN, no VRF): connection to swLeaf04:Ethernet3
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet5
+   description --- L3 p2p: (no VLAN, no VRF): connection to swBorderLeaf01:Ethernet3
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet6
+   shutdown
+!
+interface Ethernet7
+   shutdown
+!
+interface Ethernet8
+   shutdown
+!
+interface Loopback0
+   description --- Loopback (no VLAN, no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.2.3/32
+   isis enable Underlay
+   isis passive
+!
+interface Loopback255
+   description --- Loopback (no VLAN, no VRF): interface for VIP Anycast PIM-ASM
+   load-interval 60
+   ip address 10.1.255.255/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+ip routing
+!
+ipv6 unicast-routing
+!
+router bgp 65001
+   router-id 10.1.2.3
+   update wait-for-convergence
+   update wait-install
+   no bgp default ipv4-unicast
+   timers bgp 3 9
+   distance bgp 20 200 200
+   graceful-restart restart-time 300
+   graceful-restart
+   maximum-paths 16 ecmp 16
+   neighbor grpLEAFS peer group
+   neighbor grpLEAFS remote-as 65001
+   neighbor grpLEAFS update-source Loopback0
+   neighbor grpLEAFS bfd
+   neighbor grpLEAFS bfd interval 100 min-rx 100 multiplier 3
+   neighbor grpLEAFS route-reflector-client
+   neighbor grpLEAFS send-community extended
+   neighbor 10.1.1.1 peer group grpLEAFS
+   neighbor 10.1.1.2 peer group grpLEAFS
+   neighbor 10.1.1.3 peer group grpLEAFS
+   neighbor 10.1.1.4 peer group grpLEAFS
+   neighbor 10.1.1.251 peer group grpLEAFS
+   !
+   address-family evpn
+      neighbor grpLEAFS activate
+      neighbor grpLEAFS next-hop-unchanged
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.0003.00
+   router-id ipv4 10.1.0.3
+   is-type level-2
+   log-adjacency-changes
+   set-overload-bit on-startup 300
+   !
+   address-family ipv4 unicast
+      maximum-paths 16
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      routing
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router pim sparse-mode
+   ipv4
+      rp address 10.1.255.255 239.0.0.0/8
+      anycast-rp 10.1.255.255 10.1.2.1
+      anycast-rp 10.1.255.255 10.1.2.2
+      anycast-rp 10.1.255.255 10.1.2.3
+      register local-interface Loopback0
+!
+end
+```
+
+#### Коммутатор `swLeaf01`:
+```
+! Command: show running-config
+! device: swLeaf01 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+interface defaults
+   mtu 9000
+   !
+   ethernet
+      shutdown
+!
+service routing protocols model multi-agent
+!
+hostname swLeaf01
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+vlan 6
+   name TENANT-A:VLAN006
+!
+vlan 23
+   name TENANT-B:VLAN023
+!
+vlan 137
+   name TENANT-A:VLAN137
+!
+vlan 889
+   name TENANT-B:VLAN889
+!
+vlan 1026
+   name TENANT-A:VLAN026
+!
+vlan 4001
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-A
+!
+vlan 4002
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-B
+!
+vlan 4094
+   name MLAG:PEER-CONTROL
+   trunk group tgrMLAG:PEER-LINK
+!
+vrf instance TENANT-A
+   description --- VRF: RIB for Tenant-A
+!
+vrf instance TENANT-B
+   description --- VRF: RIB for Tenant-B
+!
+interface Port-Channel4
+   description --- Trunk (VLAN001): connection to srvHost01
+   load-interval 60
+   switchport trunk allowed vlan 6,23,137,889,1026
+   switchport mode trunk
+   mlag 4
+!
+interface Port-Channel4094
+   description --- Trunk (VLAN001): MLAG Peer Link
+   load-interval 60
+   switchport mode trunk
+   switchport trunk group tgrMLAG:PEER-LINK
+!
+interface Ethernet1
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine01:Ethernet1
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet2
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine02:Ethernet1
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet3
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine03:Ethernet1
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet4
+   description --- Port-channel 4 (MLAG): connection to srvHost01:Gi1
+   no shutdown
+   load-interval 60
+   channel-group 4 mode active
+!
+interface Ethernet5
+   shutdown
+!
+interface Ethernet6
+   shutdown
+!
+interface Ethernet7
+   description --- Port-channel 4094 (LACP): MLAG Peer Link
+   no shutdown
+   load-interval 60
+   channel-group 4094 mode active
+!
+interface Ethernet8
+   description --- Port-channel 4094 (LACP): MLAG Peer Link
+   no shutdown
+   load-interval 60
+   channel-group 4094 mode active
+!
+interface Loopback0
+   description --- Loopback (no VLAN, no VRF): interface for Underlay Control-Plane
+   ip address 10.1.1.1/32
+   isis enable Underlay
+   isis passive
+!
+interface Loopback1
+   description --- Loopback (no VLAN, no VRF): interface for MLAG source
+   load-interval 60
+   ip address 10.1.0.1/32
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Management1
+!
+interface Vlan6
+   description --- Virtual (VLAN006, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 172.12.23.2/24
+   ip virtual-router address 172.12.23.1
+!
+interface Vlan23
+   description --- Virtual (VLAN023, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address 192.168.23.2/24
+   ip virtual-router address 192.168.23.1
+!
+interface Vlan137
+   description --- Virtual (VLAN137, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 192.168.12.2/24
+   ip virtual-router address 192.168.12.1
+!
+interface Vlan889
+   description --- Virtual (VLAN889, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address 10.1.1.2/24
+   ip virtual-router address 10.1.1.1
+!
+interface Vlan1026
+   description --- Virtual (VLAN1026, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 10.128.14.2/24
+   ip virtual-router address 10.128.14.1
+!
+interface Vlan4001
+   description --- Virtual (VLAN4001, VRF: TENANT-A): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-A
+!
+interface Vlan4002
+   description --- Virtual (VLAN4002, VRF: TENANT-B): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-B
+!
+interface Vlan4094
+   description --- Virtual (VLAN4094, no VRF): L3 MLAG Peer Link and Heard-Beat
+   load-interval 60
+   no autostate
+   ip address 10.1.0.2/31
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   load-interval 60
+   vxlan source-interface Loopback1
+   vxlan udp-port 4789
+   vxlan vlan 6 vni 1101006
+   vxlan vlan 23 vni 1102023
+   vxlan vlan 137 vni 1101137
+   vxlan vlan 889 vni 1102889
+   vxlan vlan 1026 vni 1101026
+   vxlan vrf TENANT-A vni 1101000
+   vxlan vrf TENANT-B vni 1102000
+   vxlan learn-restrict any
+   vxlan vlan 6 flood group 239.1.0.6
+   vxlan vlan 23 flood group 239.1.0.23
+   vxlan vlan 137 flood group 239.1.1.37
+   vxlan vlan 889 flood group 239.1.8.89
+   vxlan vlan 1026 flood group 239.1.10.26
+!
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+ip routing
+ip routing vrf TENANT-A
+ip routing vrf TENANT-B
+!
+ipv6 unicast-routing
+!
+mlag configuration
+   !! MLAG: swLeaf01-swLeaf02
+   domain-id mlag01
+   local-interface Vlan4094
+   peer-address 10.1.0.3
+   peer-address heartbeat 10.1.0.3
+   peer-link Port-Channel4094
+!
+router bgp 65001
+   !! Main Layer of Overlay Control-Plane
+   router-id 10.1.1.1
+   update wait-for-convergence
+   update wait-install
+   no bgp default ipv4-unicast
+   timers bgp 3 9
+   distance bgp 20 200 200
+   graceful-restart restart-time 300
+   graceful-restart
+   maximum-paths 16 ecmp 16
+   neighbor grpSPINES peer group
+   neighbor grpSPINES remote-as 65001
+   neighbor grpSPINES update-source Loopback0
+   neighbor grpSPINES bfd
+   neighbor grpSPINES bfd interval 100 min-rx 100 multiplier 3
+   neighbor grpSPINES route-reflector-client
+   neighbor grpSPINES send-community extended
+   neighbor 10.1.2.1 peer group grpSPINES
+   neighbor 10.1.2.2 peer group grpSPINES
+   neighbor 10.1.2.3 peer group grpSPINES
+   !
+   vlan-aware-bundle vabTENANT-A
+      rd 10.1.1.1:101
+      route-target both 65101:101
+      redistribute learned
+      vlan 6,137,1026
+   !
+   vlan-aware-bundle vabTENANT-B
+      rd 10.1.1.1:102
+      route-target both 65102:102
+      redistribute learned
+      vlan 23,889
+   !
+   address-family evpn
+      route type ethernet-segment route-target auto
+      neighbor grpSPINES activate
+   !
+   vrf TENANT-A
+      !! VRF for Tenant A
+      rd 10.1.1.1:101
+      route-target import evpn 65101:101
+      route-target export evpn 65101:101
+      !
+      address-family ipv4
+         redistribute connected
+   !
+   vrf TENANT-B
+      !! VRF for Tenant B
+      rd 10.1.1.2:102
+      route-target import evpn 65102:102
+      route-target export evpn 65102:102
+      !
+      address-family ipv4
+         redistribute connected
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.1001.00
+   router-id ipv4 10.1.1.1
+   is-type level-2
+   log-adjacency-changes
+   set-overload-bit on-startup 300
+   !
+   address-family ipv4 unicast
+      maximum-paths 16
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      routing
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router pim sparse-mode
+   ipv4
+      rp address 10.1.255.255
+!
+end
+```
+
+#### Коммутатор `swLeaf02`:
+```
+! Command: show running-config
+! device: swLeaf02 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+interface defaults
+   mtu 9000
+   !
+   ethernet
+      shutdown
+!
+service routing protocols model multi-agent
+!
+hostname swLeaf02
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+vlan 6
+   name TENANT-A:VLAN006
+!
+vlan 23
+   name TENANT-B:VLAN023
+!
+vlan 137
+   name TENANT-A:VLAN137
+!
+vlan 889
+   name TENANT-B:VLAN889
+!
+vlan 1026
+   name TENANT-A:VLAN026
+!
+vlan 4001
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-A
+!
+vlan 4002
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-B
+!
+vlan 4094
+   name MLAG:PEER-CONTROL
+   trunk group tgrMLAG:PEER-LINK
+!
+vrf instance TENANT-A
+   description --- VRF: RIB for Tenant-A
+!
+vrf instance TENANT-B
+   description --- VRF: RIB for Tenant-B
+!
+interface Port-Channel4
+   description --- Trunk (VLAN001): connection to srvHost01
+   load-interval 60
+   switchport trunk allowed vlan 6,23,137,889,1026
+   switchport mode trunk
+   mlag 4
+!
+interface Port-Channel4094
+   description --- Trunk (VLAN001): MLAG Peer Link
+   load-interval 60
+   switchport mode trunk
+   switchport trunk group tgrMLAG:PEER-LINK
+!
+interface Ethernet1
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine01:Ethernet2
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet2
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine02:Ethernet2
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet3
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine03:Ethernet2
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Ethernet4
+   description --- Port-channel 4 (MLAG): connection to srvHost01:Gi2
+   no shutdown
+   load-interval 60
+   channel-group 4 mode active
+!
+interface Ethernet5
+   shutdown
+!
+interface Ethernet6
+   description --- Trunk (VLAN001): connection to srvHost02:Gi1
+   no shutdown
+   load-interval 60
+   no switchport
+!
+interface Ethernet6.4001
+   description --- L3 p2p: (VLAN4001, VRF: TENANT-A): connection to VRF TENANT-A
+   load-interval 60
+   encapsulation dot1q vlan 4001
+   vrf TENANT-A
+   ip address 10.1.101.2/31
+!
+interface Ethernet6.4002
+   description --- L3 p2p: (VLAN4002, VRF: TENANT-B): connection to VRF TENANT-B
+   load-interval 60
+   encapsulation dot1q vlan 4002
+   vrf TENANT-B
+   ip address 10.1.102.2/31
+!
+interface Ethernet7
+   description --- Port-channel 4094 (LACP): MLAG Peer Link
+   no shutdown
+   load-interval 60
+   channel-group 4094 mode active
+!
+interface Ethernet8
+   description --- Port-channel 4094 (LACP): MLAG Peer Link
+   no shutdown
+   load-interval 60
+   channel-group 4094 mode active
+!
+interface Loopback0
+   description --- Loopback (no VLAN, no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.1.2/32
+   isis enable Underlay
+   isis passive
+!
+interface Loopback1
+   description --- Loopback (no VLAN, no VRF): interface for MLAG source
+   load-interval 60
+   ip address 10.1.0.1/32
+   isis enable Underlay
+   isis network point-to-point
+!
+interface Management1
+!
+interface Vlan6
+   description --- Virtual (VLAN006, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 172.12.23.2/24
+   ip virtual-router address 172.12.23.1
+!
+interface Vlan23
+   description --- Virtual (VLAN023, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address 192.168.23.2/24
+   ip virtual-router address 192.168.23.1
+!
+interface Vlan137
+   description --- Virtual (VLAN137, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 192.168.12.2/24
+   ip virtual-router address 192.168.12.1
+!
+interface Vlan889
+   description --- Virtual (VLAN889, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address 10.1.1.2/24
+   ip virtual-router address 10.1.1.1
+!
+interface Vlan1026
+   description --- Virtual (VLAN1026, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 10.128.14.2/24
+   ip virtual-router address 10.128.14.1
+!
+interface Vlan4001
+   description --- Virtual (VLAN4001, VRF: TENANT-A): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-A
+!
+interface Vlan4002
+   description --- Virtual (VLAN4002, VRF: TENANT-B): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-B
+!
+interface Vlan4094
+   description --- Virtual (VLAN4094, no VRF): L3 MLAG Peer Link and Heard-Beat
+   load-interval 60
+   no autostate
+   ip address 10.1.0.3/31
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   load-interval 60
+   vxlan source-interface Loopback1
+   vxlan udp-port 4789
+   vxlan vlan 6 vni 1101006
+   vxlan vlan 23 vni 1102023
+   vxlan vlan 137 vni 1101137
+   vxlan vlan 889 vni 1102889
+   vxlan vlan 1026 vni 1101026
+   vxlan vrf TENANT-A vni 1101000
+   vxlan vrf TENANT-B vni 1102000
+   vxlan learn-restrict any
+   vxlan vlan 6 flood group 239.1.0.6
+   vxlan vlan 23 flood group 239.1.0.23
+   vxlan vlan 137 flood group 239.1.1.37
+   vxlan vlan 889 flood group 239.1.8.89
+   vxlan vlan 1026 flood group 239.1.10.26
+!
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+ip routing
+ip routing vrf TENANT-A
+ip routing vrf TENANT-B
+!
+ipv6 unicast-routing
+!
+mlag configuration
+   !! MLAG: swLeaf01-swLeaf02
+   domain-id mlag01
+   local-interface Vlan4094
+   peer-address 10.1.0.2
+   peer-address heartbeat 10.1.0.2
+   peer-link Port-Channel4094
+!
+router bgp 65001
+   !! Main Layer of Overlay Control-Plane
+   router-id 10.1.1.2
+   update wait-for-convergence
+   update wait-install
+   timers bgp 3 9
+   distance bgp 20 200 200
+   graceful-restart restart-time 300
+   graceful-restart
+   maximum-paths 16 ecmp 16
+   neighbor grpONEARMSYSTEMS peer group
+   neighbor grpONEARMSYSTEMS bfd
+   neighbor grpONEARMSYSTEMS bfd interval 100 min-rx 100 multiplier 3
+   neighbor grpSPINES peer group
+   neighbor grpSPINES remote-as 65001
+   neighbor grpSPINES update-source Loopback0
+   neighbor grpSPINES bfd
+   neighbor grpSPINES bfd interval 100 min-rx 100 multiplier 3
+   neighbor grpSPINES route-reflector-client
+   neighbor grpSPINES send-community extended
+   neighbor 10.1.2.1 peer group grpSPINES
+   neighbor 10.1.2.2 peer group grpSPINES
+   neighbor 10.1.2.3 peer group grpSPINES
+   !
+   vlan-aware-bundle vabTENANT-A
+      rd 10.1.1.2:101
+      route-target both 65101:101
+      redistribute learned
+      vlan 6,137,1026
+   !
+   vlan-aware-bundle vabTENANT-B
+      rd 10.1.1.2:102
+      route-target both 65102:102
+      redistribute learned
+      vlan 23,889
+   !
+   address-family evpn
+      route type ethernet-segment route-target auto
+      neighbor grpSPINES activate
+   !
+   address-family ipv4
+      neighbor grpONEARMSYSTEMS activate
+   !
+   vrf TENANT-A
+      !! VRF for Tenant A
+      rd 10.1.1.2:101
+      route-target import evpn 65101:101
+      route-target export evpn 65101:101
+      maximum-paths 16 ecmp 16
+      neighbor 10.1.101.3 peer group grpONEARMSYSTEMS
+      neighbor 10.1.101.3 remote-as 65101
+      neighbor 10.1.101.3 update-source Ethernet6.4001
+      neighbor 10.1.101.3 default-originate
+      !
+      address-family ipv4
+         redistribute connected
+   !
+   vrf TENANT-B
+      !! VRF for Tenant B
+      rd 10.1.1.2:102
+      route-target import evpn 65102:102
+      route-target export evpn 65102:102
+      maximum-paths 16 ecmp 16
+      neighbor 10.1.102.3 peer group grpONEARMSYSTEMS
+      neighbor 10.1.102.3 remote-as 65101
+      neighbor 10.1.102.3 update-source Ethernet6.4002
+      neighbor 10.1.102.3 default-originate
+      !
+      address-family ipv4
+         redistribute connected
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.1002.00
+   router-id ipv4 10.1.1.2
+   is-type level-2
+   log-adjacency-changes
+   set-overload-bit on-startup 300
+   !
+   address-family ipv4 unicast
+      maximum-paths 16
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      routing
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router pim sparse-mode
+   ipv4
+      rp address 10.1.255.255
+!
+end
+```
+
+#### Коммутатор `swLeaf03`:
+```
+! Command: show running-config
+! device: swLeaf03 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+interface defaults
+   mtu 9000
+   !
+   ethernet
+      shutdown
+!
+service routing protocols model multi-agent
+!
+link tracking group ltgPortChannel5
+   links minimum 2
+   recovery delay 60
+!
+hostname swLeaf03
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+vlan 6
+   name TENANT-A:VLAN006
+!
+vlan 23
+   name TENANT-B:VLAN023
+!
+vlan 137
+   name TENANT-A:VLAN137
+!
+vlan 889
+   name TENANT-B:VLAN889
+!
+vlan 1026
+   name TENANT-A:VLAN026
+!
+vlan 4001
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-A
+!
+vlan 4002
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-B
+!
+vrf instance TENANT-A
+   description --- VRF: RIB for Tenant-A
+!
+vrf instance TENANT-B
+   description --- VRF: RIB for Tenant-B
+!
+interface Port-Channel5
+   description --- Trunk (VLAN001): connection to srvHost03
+   load-interval 60
+   switchport trunk allowed vlan 6,23,137,889,1026
+   switchport mode trunk
+   !
+   evpn ethernet-segment
+      identifier auto lacp
+   lacp system-id 001c.7300.0005
+!
+interface Ethernet1
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine01:Ethernet3
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group ltgPortChannel5 upstream
+!
+interface Ethernet2
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine02:Ethernet3
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group ltgPortChannel5 upstream
+!
+interface Ethernet3
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine03:Ethernet3
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group ltgPortChannel5 upstream
+!
+interface Ethernet4
+   shutdown
+!
+interface Ethernet5
+   description --- Port-channel 5 (Multi-Home): connection to srvHost03:Gi1
+   no shutdown
+   load-interval 60
+   channel-group 5 mode active
+   link tracking group ltgPortChannel5 downstream
+!
+interface Ethernet6
+   description --- Trunk (VLAN001): connection to srvHost02:Gi1
+   no shutdown
+   load-interval 60
+   no switchport
+!
+interface Ethernet6.4001
+   description --- L3 p2p: (VLAN4001, VRF: TENANT-A): connection to VRF TENANT-A
+   load-interval 60
+   encapsulation dot1q vlan 4001
+   vrf TENANT-A
+   ip address 10.1.101.4/31
+!
+interface Ethernet6.4002
+   description --- L3 p2p: (VLAN4002, VRF: TENANT-B): connection to VRF TENANT-B
+   load-interval 60
+   encapsulation dot1q vlan 4002
+   vrf TENANT-B
+   ip address 10.1.102.4/31
+!
+interface Ethernet7
+   shutdown
+!
+interface Ethernet8
+   shutdown
+!
+interface Loopback0
+   description --- Loopback (no VLAN, no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.1.3/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+interface Vlan6
+   description --- Virtual (VLAN006, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 172.12.23.2/24
+   ip virtual-router address 172.12.23.1
+!
+interface Vlan23
+   description --- Virtual (VLAN023, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address 192.168.23.2/24
+   ip virtual-router address 192.168.23.1
+!
+interface Vlan137
+   description --- Virtual (VLAN137, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 192.168.12.2/24
+   ip virtual-router address 192.168.12.1
+!
+interface Vlan889
+   description --- Virtual (VLAN889, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address 10.1.1.2/24
+   ip virtual-router address 10.1.1.1
+Oct  4 07:49:59 swLeaf03 Bgp: %BGP-3-NOTIFICATION: sent to neighbor 10.1.2.3 (VRF default AS 65001) 6/10 (Cease/BFD down <Hard Reset>) 0 bytes
+!
+interface Vlan1026
+   description --- Virtual (VLAN1026, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 10.128.14.2/24
+   ip virtual-router address 10.128.14.1
+!
+interface Vlan4001
+   description --- Virtual (VLAN4001, VRF: TENANT-A): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-A
+!
+interface Vlan4002
+   description --- Virtual (VLAN4002, VRF: TENANT-B): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-B
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   load-interval 60
+   vxlan source-interface Loopback0
+   vxlan udp-port 4789
+   vxlan vlan 6 vni 1101006
+   vxlan vlan 23 vni 1102023
+   vxlan vlan 137 vni 1101137
+   vxlan vlan 889 vni 1102889
+   vxlan vlan 1026 vni 1101026
+   vxlan vrf TENANT-A vni 1101000
+   vxlan vrf TENANT-B vni 1102000
+   vxlan learn-restrict any
+   vxlan vlan 6 flood group 239.1.0.6
+   vxlan vlan 23 flood group 239.1.0.23
+   vxlan vlan 137 flood group 239.1.1.37
+   vxlan vlan 889 flood group 239.1.8.89
+   vxlan vlan 1026 flood group 239.1.10.26
+!
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+ip routing
+ip routing vrf TENANT-A
+ip routing vrf TENANT-B
+!
+ipv6 unicast-routing
+!
+router bgp 65001
+   !! Main Layer of Overlay Control-Plane
+   router-id 10.1.1.3
+   update wait-for-convergence
+   update wait-install
+   timers bgp 3 9
+   distance bgp 20 200 200
+   graceful-restart restart-time 300
+   graceful-restart
+   maximum-paths 16 ecmp 16
+   neighbor grpONEARMSYSTEMS peer group
+   neighbor grpONEARMSYSTEMS bfd
+   neighbor grpONEARMSYSTEMS bfd interval 100 min-rx 100 multiplier 3
+   neighbor grpSPINES peer group
+   neighbor grpSPINES remote-as 65001
+   neighbor grpSPINES update-source Loopback0
+   neighbor grpSPINES bfd
+   neighbor grpSPINES bfd interval 100 min-rx 100 multiplier 3
+   neighbor grpSPINES route-reflector-client
+   neighbor grpSPINES send-community extended
+   neighbor 10.1.2.1 peer group grpSPINES
+   neighbor 10.1.2.2 peer group grpSPINES
+   neighbor 10.1.2.3 peer group grpSPINES
+   !
+   vlan-aware-bundle vabTENANT-A
+      rd 10.1.1.3:101
+      route-target both 65101:101
+      redistribute learned
+      vlan 6,137,1026
+   !
+   vlan-aware-bundle vabTENANT-B
+      rd 10.1.1.3:102
+      route-target both 65102:102
+      redistribute learned
+      vlan 23,889
+   !
+   address-family evpn
+      route type ethernet-segment route-target auto
+      neighbor grpSPINES activate
+   !
+   address-family ipv4
+      neighbor grpONEARMSYSTEMS activate
+   !
+   vrf TENANT-A
+      !! VRF for Tenant A
+      rd 10.1.1.3:101
+      route-target import evpn 65101:101
+      route-target export evpn 65101:101
+      maximum-paths 16 ecmp 16
+      neighbor 10.1.101.5 peer group grpONEARMSYSTEMS
+      neighbor 10.1.101.5 remote-as 65101
+      neighbor 10.1.101.5 update-source Ethernet6.4001
+      neighbor 10.1.101.5 default-originate
+      !
+      address-family ipv4
+         redistribute connected
+   !
+   vrf TENANT-B
+      !! VRF for Tenant B
+      rd 10.1.1.3:102
+      route-target import evpn 65102:102
+      route-target export evpn 65102:102
+      maximum-paths 16 ecmp 16
+      neighbor 10.1.102.5 peer group grpONEARMSYSTEMS
+      neighbor 10.1.102.5 remote-as 65101
+      neighbor 10.1.102.5 update-source Ethernet6.4002
+      neighbor 10.1.102.5 default-originate
+      !
+      address-family ipv4
+         redistribute connected
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.1003.00
+   router-id ipv4 10.1.1.3
+   is-type level-2
+   log-adjacency-changes
+   set-overload-bit on-startup 300
+   !
+   address-family ipv4 unicast
+      maximum-paths 16
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      routing
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router pim sparse-mode
+   ipv4
+      rp address 10.1.255.255
+!
+end
+```
+
+#### Коммутатор `swLeaf04`:
+```
+! Command: show running-config
+! device: swLeaf04 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+interface defaults
+   !! Security Off, Jumbo-frame on
+   mtu 9000
+   !
+   ethernet
+      shutdown
+!
+service routing protocols model multi-agent
+!
+link tracking group ltgPortChannel5
+   links minimum 2
+   recovery delay 60
+!
+hostname swLeaf04
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+vlan 6
+   name TENANT-A:VLAN006
+!
+vlan 23
+   name TENANT-B:VLAN023
+!
+vlan 137
+   name TENANT-A:VLAN137
+!
+vlan 889
+   name TENANT-B:VLAN889
+!
+vlan 1026
+   name TENANT-A:VLAN026
+!
+vlan 4001
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-A
+!
+vlan 4002
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-B
+!
+vrf instance TENANT-A
+   description --- VRF: RIB for Tenant-A
+!
+vrf instance TENANT-B
+   description --- VRF: RIB for Tenant-B
+!
+interface Port-Channel5
+   description --- Trunk (VLAN001): connection to srvHost03
+   load-interval 60
+   switchport trunk allowed vlan 6,23,137,889,1026
+   switchport mode trunk
+   !
+   evpn ethernet-segment
+      identifier auto lacp
+   lacp system-id 001c.7300.0005
+!
+interface Ethernet1
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine01:Ethernet4
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group ltgPortChannel5 upstream
+!
+interface Ethernet2
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine02:Ethernet4
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group ltgPortChannel5 upstream
+!
+interface Ethernet3
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine03:Ethernet4
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group ltgPortChannel5 upstream
+!
+interface Ethernet4
+   shutdown
+!
+interface Ethernet5
+   description --- Port-channel 5 (Multi-Home): connection to srvHost03:Gi2
+   no shutdown
+   load-interval 60
+   channel-group 5 mode active
+   link tracking group ltgPortChannel5 downstream
+!
+interface Ethernet6
+   shutdown
+!
+interface Ethernet7
+   shutdown
+!
+interface Ethernet8
+   shutdown
+!
+interface Loopback0
+   description --- Loopback (no VLAN, no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.1.4/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+interface Vlan6
+   description --- Virtual (VLAN006, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 172.12.23.2/24
+   ip virtual-router address 172.12.23.1
+!
+interface Vlan23
+   description --- Virtual (VLAN023, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address 192.168.23.2/24
+   ip virtual-router address 192.168.23.1
+!
+interface Vlan137
+   description --- Virtual (VLAN137, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 192.168.12.2/24
+   ip virtual-router address 192.168.12.1
+!
+interface Vlan889
+   description --- Virtual (VLAN889, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address 10.1.1.2/24
+   ip virtual-router address 10.1.1.1
+!
+interface Vlan1026
+   description --- Virtual (VLAN1026, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 10.128.14.2/24
+   ip virtual-router address 10.128.14.1
+!
+interface Vlan4001
+   description --- Virtual (VLAN4001, VRF: TENANT-A): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-A
+!
+interface Vlan4002
+   description --- Virtual (VLAN4002, VRF: TENANT-B): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-B
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   load-interval 60
+   vxlan source-interface Loopback0
+   vxlan udp-port 4789
+   vxlan vlan 6 vni 1101006
+   vxlan vlan 23 vni 1102023
+   vxlan vlan 137 vni 1101137
+   vxlan vlan 889 vni 1102889
+   vxlan vlan 1026 vni 1101026
+   vxlan vrf TENANT-A vni 1101000
+   vxlan vrf TENANT-B vni 1102000
+   vxlan learn-restrict any
+   vxlan vlan 6 flood group 239.1.0.6
+   vxlan vlan 23 flood group 239.1.0.23
+   vxlan vlan 137 flood group 239.1.1.37
+   vxlan vlan 889 flood group 239.1.8.89
+   vxlan vlan 1026 flood group 239.1.10.26
+!
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+ip routing
+ip routing vrf TENANT-A
+ip routing vrf TENANT-B
+!
+ipv6 unicast-routing
+!
+router bgp 65001
+   !! Main Layer of Overlay Control-Plane
+   router-id 10.1.1.4
+   update wait-for-convergence
+   update wait-install
+   no bgp default ipv4-unicast
+   timers bgp 3 9
+   distance bgp 20 200 200
+   graceful-restart restart-time 300
+   graceful-restart
+   maximum-paths 16 ecmp 16
+   neighbor grpSPINES peer group
+   neighbor grpSPINES remote-as 65001
+   neighbor grpSPINES update-source Loopback0
+   neighbor grpSPINES bfd
+   neighbor grpSPINES bfd interval 100 min-rx 100 multiplier 3
+   neighbor grpSPINES route-reflector-client
+   neighbor grpSPINES send-community extended
+   neighbor 10.1.2.1 peer group grpSPINES
+   neighbor 10.1.2.2 peer group grpSPINES
+   neighbor 10.1.2.3 peer group grpSPINES
+   !
+   vlan-aware-bundle vabTENANT-A
+      rd 10.1.1.4:101
+      route-target both 65101:101
+      redistribute learned
+      vlan 6,137,1026
+   !
+   vlan-aware-bundle vabTENANT-B
+      rd 10.1.1.4:102
+      route-target both 65102:102
+      redistribute learned
+      vlan 23,889
+   !
+   address-family evpn
+      route type ethernet-segment route-target auto
+      neighbor grpSPINES activate
+   !
+   vrf TENANT-A
+      !! VRF for Tenant A
+      rd 10.1.1.4:101
+      route-target import evpn 65101:101
+      route-target export evpn 65101:101
+      !
+      address-family ipv4
+         redistribute connected
+   !
+   vrf TENANT-B
+      !! VRF for Tenant B
+      rd 10.1.1.4:102
+      route-target import evpn 65102:102
+      route-target export evpn 65102:102
+      !
+      address-family ipv4
+         redistribute connected
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.1004.00
+   router-id ipv4 10.1.1.4
+   is-type level-2
+   log-adjacency-changes
+   set-overload-bit on-startup 300
+   !
+   address-family ipv4 unicast
+      maximum-paths 16
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      routing
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router pim sparse-mode
+   ipv4
+      rp address 10.1.255.255
+!
+end
+```
+
+#### Коммутатор `swBorderLeaf01`:
+```
+! Command: show running-config
+! device: swBorderLeaf01 (vEOS-lab, EOS-4.33.1.1F)
+!
+! boot system flash:/vEOS-lab.swi
+!
+no aaa root
+!
+no service interface inactive port-id allocation disabled
+!
+transceiver qsfp default-mode 4x10G
+!
+interface defaults
+   !! Security Off, Jumbo-frame on
+   mtu 9000
+   !
+   ethernet
+      shutdown
+!
+service routing protocols model multi-agent
+!
+link tracking group ltgPortChannel5
+   links minimum 2
+   recovery delay 60
+!
+hostname swBorderLeaf01
+dns domain Underlay.local
+!
+spanning-tree mode mstp
+!
+system l1
+   unsupported speed action error
+   unsupported error-correction action error
+!
+vlan 6
+   name TENANT-A:VLAN006
+!
+vlan 23
+   name TENANT-B:VLAN023
+!
+vlan 137
+   name TENANT-A:VLAN137
+!
+vlan 889
+   name TENANT-B:VLAN889
+!
+vlan 1026
+   name TENANT-A:VLAN026
+!
+vlan 4001
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-A
+!
+vlan 4002
+   !! VLAN for L3VPN Symmetric IRB
+   name L3VPN:TENANT-B
+!
+vrf instance TENANT-A
+   description --- VRF: RIB for Tenant-A
+!
+vrf instance TENANT-B
+   description --- VRF: RIB for Tenant-B
+!
+interface Port-Channel5
+   description --- Trunk (VLAN001): connection to srvHost03
+   load-interval 60
+   switchport trunk allowed vlan 6,23,137,889,1026
+   switchport mode trunk
+   !
+   evpn ethernet-segment
+      identifier auto lacp
+   lacp system-id 001c.7300.0005
+!
+interface Ethernet1
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine01:Ethernet5
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group ltgPortChannel5 upstream
+!
+interface Ethernet2
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine02:Ethernet5
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group ltgPortChannel5 upstream
+!
+interface Ethernet3
+   description --- L3 p2p: (no VLAN, no VRF): connection to swSpine03:Ethernet5
+   no shutdown
+   load-interval 60
+   mtu 9000
+   no switchport
+   ip address unnumbered Loopback0
+   ipv6 enable
+   pim ipv4 sparse-mode
+   isis enable Underlay
+   isis network point-to-point
+   link tracking group ltgPortChannel5 upstream
+!
+interface Ethernet4
+   description --- Trunk (VLAN001): connection to fwBorder01:Gi1
+   no shutdown
+   load-interval 60
+   switchport trunk allowed vlan 4001-4002
+   switchport mode trunk
+!
+interface Ethernet5
+   description --- Port-channel 5 (Multi-Home): connection to srvHost03:Gi2
+   no shutdown
+   load-interval 60
+   channel-group 5 mode active
+   link tracking group ltgPortChannel5 downstream
+!
+interface Ethernet6
+   shutdown
+!
+interface Ethernet7
+   shutdown
+!
+interface Ethernet8
+   shutdown
+!
+interface Loopback0
+   description --- Loopback (no VLAN, no VRF): interface for Underlay Control-Plane
+   load-interval 60
+   ip address 10.1.1.251/32
+   isis enable Underlay
+   isis passive
+!
+interface Management1
+!
+interface Vlan6
+   description --- Virtual (VLAN006, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 172.12.23.2/24
+   ip virtual-router address 172.12.23.1
+!
+interface Vlan23
+   description --- Virtual (VLAN023, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address 192.168.23.2/24
+   ip virtual-router address 192.168.23.1
+!
+interface Vlan137
+   description --- Virtual (VLAN137, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 192.168.12.2/24
+   ip virtual-router address 192.168.12.1
+!
+interface Vlan889
+   description --- Virtual (VLAN889, VRF: TENANT-B): interface for L3 termination
+   no autostate
+   vrf TENANT-B
+   ip address 10.1.1.2/24
+   ip virtual-router address 10.1.1.1
+!
+interface Vlan1026
+   description --- Virtual (VLAN1026, VRF: TENANT-A): interface for L3 termination
+   no autostate
+   vrf TENANT-A
+   ip address 10.128.14.2/24
+   ip virtual-router address 10.128.14.1
+!
+interface Vlan4001
+   description --- Virtual (VLAN4001, VRF: TENANT-A): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-A
+   ip address 10.1.101.1/31
+!
+interface Vlan4002
+   description --- Virtual (VLAN4002, VRF: TENANT-B): interface for L3 VPN tunneling via Symmetric IRB
+   no autostate
+   vrf TENANT-B
+   ip address 10.1.102.1/31
+!
+interface Vxlan1
+   description --- VxLAN (no VRF): interface for Overlay Control-Plane
+   load-interval 60
+   vxlan source-interface Loopback0
+   vxlan udp-port 4789
+   vxlan vlan 6 vni 1101006
+   vxlan vlan 23 vni 1102023
+   vxlan vlan 137 vni 1101137
+   vxlan vlan 889 vni 1102889
+   vxlan vlan 1026 vni 1101026
+   vxlan vrf TENANT-A vni 1101000
+   vxlan vrf TENANT-B vni 1102000
+   vxlan learn-restrict any
+   vxlan vlan 6 flood group 239.1.0.6
+   vxlan vlan 23 flood group 239.1.0.23
+   vxlan vlan 137 flood group 239.1.1.37
+   vxlan vlan 889 flood group 239.1.8.89
+   vxlan vlan 1026 flood group 239.1.10.26
+!
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+ip routing
+ip routing vrf TENANT-A
+ip routing vrf TENANT-B
+!
+ipv6 unicast-routing
+!
+router bgp 65001
+   !! Main Layer of Overlay Control-Plane
+   router-id 10.1.1.251
+   update wait-for-convergence
+   update wait-install
+   timers bgp 3 9
+   distance bgp 20 200 200
+   graceful-restart restart-time 300
+   graceful-restart
+   maximum-paths 16 ecmp 16
+   neighbor grpONEARMSYSTEMS peer group
+   neighbor grpONEARMSYSTEMS bfd
+   neighbor grpONEARMSYSTEMS bfd interval 100 min-rx 100 multiplier 3
+   neighbor grpSPINES peer group
+   neighbor grpSPINES remote-as 65001
+   neighbor grpSPINES update-source Loopback0
+   neighbor grpSPINES bfd
+   neighbor grpSPINES bfd interval 100 min-rx 100 multiplier 3
+   neighbor grpSPINES route-reflector-client
+   neighbor grpSPINES send-community extended
+   neighbor 10.1.2.1 peer group grpSPINES
+   neighbor 10.1.2.2 peer group grpSPINES
+   neighbor 10.1.2.3 peer group grpSPINES
+   !
+   vlan-aware-bundle vabTENANT-A
+      rd 10.1.1.251:101
+      route-target both 65101:101
+      redistribute learned
+      vlan 6,137,1026
+   !
+   vlan-aware-bundle vabTENANT-B
+      rd 10.1.1.251:102
+      route-target both 65102:102
+      redistribute learned
+      vlan 23,889
+   !
+   address-family evpn
+      route type ethernet-segment route-target auto
+      neighbor grpSPINES activate
+   !
+   address-family ipv4
+      neighbor grpONEARMSYSTEMS activate
+   !
+   vrf TENANT-A
+      !! VRF for Tenant A
+      rd 10.1.1.251:101
+      route-target import evpn 65101:101
+      route-target export evpn 65101:101
+      neighbor 10.1.101.0 peer group grpONEARMSYSTEMS
+      neighbor 10.1.101.0 remote-as 65100
+      neighbor 10.1.101.0 update-source Vlan4001
+      !
+      address-family ipv4
+         redistribute connected
+   !
+   vrf TENANT-B
+      !! VRF for Tenant B
+      rd 10.1.1.251:102
+      route-target import evpn 65102:102
+      route-target export evpn 65102:102
+      neighbor 10.1.102.0 peer group grpONEARMSYSTEMS
+      neighbor 10.1.102.0 remote-as 65100
+      neighbor 10.1.102.0 update-source Vlan4002
+      !
+      address-family ipv4
+         redistribute connected
+!
+router isis Underlay
+   hello padding disabled
+   net 49.0001.0100.0100.1251.00
+   router-id ipv4 10.1.1.251
+   is-type level-2
+   log-adjacency-changes
+   set-overload-bit on-startup 300
+   !
+   address-family ipv4 unicast
+      maximum-paths 16
+      bfd all-interfaces
+!
+router multicast
+   ipv4
+      routing
+      software-forwarding kernel
+   !
+   ipv6
+      software-forwarding kernel
+!
+router pim sparse-mode
+   ipv4
+      rp address 10.1.255.255
+!
+end
+```
+
+#### Сервер `srvHost01`
+```
+!
+! Last configuration change at 10:47:21 UTC Fri Oct 2 2026
+!
+version 17.3
+service timestamps debug datetime msec
+service timestamps log datetime msec
+! Call-home is enabled by Smart-Licensing.
+service call-home
+platform qfp utilization monitor load 80
+platform punt-keepalive disable-kernel-core
+platform console serial
+!
+hostname srvHost01
+!
+boot-start-marker
+boot-end-marker
+!
+no aaa new-model
+!
+ip vrf VLAN006
+ description --- VRF (TENANT-A): vrf for VLAN006
+!
+ip vrf VLAN023
+ description --- VRF (TENANT-B): vrf for VLAN023
+!
+ip vrf VLAN1026
+ description --- VRF (TENANT-A): vrf for VLAN1026
+!
+ip vrf VLAN137
+ description --- VRF (TENANT-A): vrf for VLAN137
+!
+ip vrf VLAN889
+ description --- VRF (TENANT-B): vrf for VLAN889
+!
+ip domain name local
+!
+login on-success log
+!
+subscriber templating
+!
+multilink bundle-name authenticated
+!
+license udi pid ISRV sn 9FTQ2JDJY1B
+diagnostic bootup level minimal
+memory free low-watermark processor 69838
+!
+spanning-tree extend system-id
+!
+redundancy
+!
+lldp run
+!
+interface Port-channel1
+ description --- Trunk (VLAN001): connection to MLAG: swLeaf01, swLeaf02
+ no ip address
+ load-interval 60
+ no negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface Port-channel1.6
+ description --- Virtual (VLAN006, TENANT-A): "TENANT-A:VLAN6"
+ encapsulation dot1Q 6
+ ip vrf forwarding VLAN006
+ ip address 172.12.23.101 255.255.255.0
+!
+interface Port-channel1.23
+ description --- Virtual (VLAN023, VRF: TENANT-B): "TENANT-B:VLAN023"
+ encapsulation dot1Q 23
+ ip vrf forwarding VLAN023
+ ip address 192.168.23.101 255.255.255.0
+!
+interface Port-channel1.137
+ description --- Virtual (VLAN137, VRF: TENANT-A): "TENANT-A:VLAN137"
+ encapsulation dot1Q 137
+ ip vrf forwarding VLAN137
+ ip address 192.168.12.101 255.255.255.0
+!
+interface Port-channel1.889
+ description --- Virtual (VLAN889, VRF: TENANT-B): "TENANT-B:VLAN889"
+ encapsulation dot1Q 889
+ ip vrf forwarding VLAN889
+ ip address 10.1.1.101 255.255.255.0
+!
+interface Port-channel1.1026
+ description --- Virtual (VLAN1026, TENANT-A): "TENANT-A:VLAN1026"
+ encapsulation dot1Q 1026
+ ip vrf forwarding VLAN1026
+ ip address 10.128.14.101 255.255.255.0
+!
+interface GigabitEthernet1
+ description --- Port-channel 1 (MLAG): connection to swLeaf01:Ethernet4
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet2
+ description --- Port-channel 1 (MLAG): connection to swLeaf02:Ethernet4
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet3
+ no ip address
+ shutdown
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet4
+ no ip address
+ shutdown
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+ip forward-protocol nd
+ip http server
+ip http authentication local
+ip http secure-server
+!
+ip route vrf VLAN006 0.0.0.0 0.0.0.0 172.12.23.1
+ip route vrf VLAN023 0.0.0.0 0.0.0.0 192.168.23.1
+ip route vrf VLAN1026 0.0.0.0 0.0.0.0 10.128.14.1
+ip route vrf VLAN137 0.0.0.0 0.0.0.0 192.168.12.1
+ip route vrf VLAN889 0.0.0.0 0.0.0.0 10.1.1.1
+!
+control-plane
+!
+mgcp behavior rsip-range tgcp-only
+mgcp behavior comedia-role none
+mgcp behavior comedia-check-media-src disable
+mgcp behavior comedia-sdp-force disable
+!
+mgcp profile default
+!
+line con 0
+ exec-timeout 0 0
+ stopbits 1
+line aux 0
+ stopbits 1
+line vty 0 4
+ login
+ transport input ssh
+!
+call-home
+ ! If contact email address in call-home is configured as sch-smart-licensing@cisco.com
+ ! the email address configured in Cisco Smart License Portal will be used as contact email address to send SCH notifications.
+ contact-email-addr sch-smart-licensing@cisco.com
+ profile "CiscoTAC-1"
+  active
+  destination transport-method http
+!
+end
+```
+
+#### Сервер `srvHost02`
+```
+!
+! Last configuration change at 10:44:54 UTC Fri Oct 2 2026
+!
+version 17.3
+service timestamps debug datetime msec
+service timestamps log datetime msec
+service call-home
+platform qfp utilization monitor load 80
+platform punt-keepalive disable-kernel-core
+platform console serial
+!
+hostname srvHost02
+!
+boot-start-marker
+boot-end-marker
+!
+vrf definition TENANT-A
+ description --- VRF: Tenant A RIB
+ rd 65101:101
+ !
+ address-family ipv4
+  route-target export 65101:101
+  route-target import 65101:101
+ exit-address-family
+!
+vrf definition TENANT-B
+ description --- VRF: Tenant B RIB
+ rd 65102:102
+ !
+ address-family ipv4
+  route-target export 65102:102
+  route-target import 65102:102
+ exit-address-family
+!
+no aaa new-model
+!
+ip domain name local
+!
+login on-success log
+!
+subscriber templating
+!
+multilink bundle-name authenticated
+!
+license udi pid ISRV sn 9PD23VRK5VT
+diagnostic bootup level minimal
+memory free low-watermark processor 69838
+!
+spanning-tree extend system-id
+!
+redundancy
+!
+lldp run
+!
+interface Loopback101
+ description --- Loopback 101 (no VLAN, VRF: TENANT-A): LAN for VRF TENANT-A
+ vrf forwarding TENANT-A
+ ip address 10.101.10.1 255.255.255.0
+ load-interval 60
+!
+interface Loopback102
+ description --- Loopback 102 (no VLAN, VRF: TENANT-B): LAN for VRF TENANT-B
+ vrf forwarding TENANT-B
+ ip address 10.102.10.1 255.255.255.0
+ load-interval 60
+!
+interface GigabitEthernet1
+ description --- Trunk (VLAN001): connection to swLeaf02:Ethernet6
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet1.4001
+ description --- L3 p2p: (VLAN4001, VRF: TENANT-A): connection to VRF TENANT-A
+ encapsulation dot1Q 4001
+ vrf forwarding TENANT-A
+ ip address 10.1.101.3 255.255.255.254
+ bfd interval 100 min_rx 100 multiplier 3
+!
+interface GigabitEthernet1.4002
+ description --- L3 p2p: (VLAN4002, VRF: TENANT-B): connection to VRF TENANT-B
+ encapsulation dot1Q 4002
+ vrf forwarding TENANT-B
+ ip address 10.1.102.3 255.255.255.254
+ bfd interval 100 min_rx 100 multiplier 3
+!
+interface GigabitEthernet2
+ description --- Trunk (VLAN001): connection to swLeaf03:Ethernet6
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet2.4001
+ description --- L3 p2p: (VLAN4001, VRF: TENANT-A): connection to VRF TENANT-A
+ encapsulation dot1Q 4001
+ vrf forwarding TENANT-A
+ ip address 10.1.101.5 255.255.255.254
+ bfd interval 100 min_rx 100 multiplier 3
+!
+interface GigabitEthernet2.4002
+ description --- L3 p2p: (VLAN4002, VRF: TENANT-B): connection to VRF TENANT-B
+ encapsulation dot1Q 4002
+ vrf forwarding TENANT-B
+ ip address 10.1.102.5 255.255.255.254
+ bfd interval 100 min_rx 100 multiplier 3
+!
+interface GigabitEthernet3
+ no ip address
+ shutdown
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet4
+ no ip address
+ shutdown
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+router bgp 65101
+ bgp router-id 10.1.100.2
+ bgp log-neighbor-changes
+ bgp update-delay 1
+ bgp graceful-restart restart-time 300
+ bgp graceful-restart
+ timers bgp 3 9
+ maximum-paths 16
+ !
+ address-family ipv4 vrf TENANT-A
+  network 10.101.10.0 mask 255.255.255.0
+  neighbor 10.1.101.2 remote-as 65001
+  neighbor 10.1.101.2 description --- Peer: connection to fabric
+  neighbor 10.1.101.2 update-source GigabitEthernet1.4001
+  neighbor 10.1.101.2 fall-over bfd
+  neighbor 10.1.101.2 activate
+  neighbor 10.1.101.4 remote-as 65001
+  neighbor 10.1.101.4 description --- Peer: connection to fabric
+  neighbor 10.1.101.4 update-source GigabitEthernet2.4001
+  neighbor 10.1.101.4 fall-over bfd
+  neighbor 10.1.101.4 activate
+  maximum-paths 16
+ exit-address-family
+ !
+ address-family ipv4 vrf TENANT-B
+  network 10.102.10.0 mask 255.255.255.0
+  neighbor 10.1.102.2 remote-as 65001
+  neighbor 10.1.102.2 description --- Peer: connection to fabric
+  neighbor 10.1.102.2 update-source GigabitEthernet1.4002
+  neighbor 10.1.102.2 fall-over bfd
+  neighbor 10.1.102.2 activate
+  neighbor 10.1.102.4 remote-as 65001
+  neighbor 10.1.102.4 description --- Peer: connection to fabric
+  neighbor 10.1.102.4 update-source GigabitEthernet2.4002
+  neighbor 10.1.102.4 fall-over bfd
+  neighbor 10.1.102.4 activate
+  maximum-paths 16
+ exit-address-family
+!
+ip forward-protocol nd
+ip http server
+ip http authentication local
+ip http secure-server
+!
+control-plane
+!
+mgcp behavior rsip-range tgcp-only
+mgcp behavior comedia-role none
+mgcp behavior comedia-check-media-src disable
+mgcp behavior comedia-sdp-force disable
+!
+mgcp profile default
+!
+line con 0
+ exec-timeout 0 0
+ stopbits 1
+line aux 0
+ stopbits 1
+line vty 0 4
+ login
+ transport input ssh
+!
+call-home
+ ! If contact email address in call-home is configured as sch-smart-licensing@cisco.com
+ ! the email address configured in Cisco Smart License Portal will be used as contact email address to send SCH notifications.
+ contact-email-addr sch-smart-licensing@cisco.com
+ profile "CiscoTAC-1"
+  active
+  destination transport-method http
+!
+end
+```
+
+#### Сервер `srvHost03`
+```
+!
+! Last configuration change at 16:43:58 UTC Thu Oct 1 2026
+!
+version 17.3
+service timestamps debug datetime msec
+service timestamps log datetime msec
+! Call-home is enabled by Smart-Licensing.
+service call-home
+platform qfp utilization monitor load 80
+platform punt-keepalive disable-kernel-core
+platform console serial
+!
+hostname srvHost03
+!
+boot-start-marker
+boot-end-marker
+!
+no aaa new-model
+!
+ip vrf VLAN006
+ description --- VRF (TENANT-A): vrf for VLAN006
+!
+ip vrf VLAN023
+ description --- VRF (TENANT-B): vrf for VLAN023
+!
+ip vrf VLAN1026
+ description --- VRF (TENANT-A): vrf for VLAN1026
+!
+ip vrf VLAN137
+ description --- VRF (TENANT-A): vrf for VLAN137
+!
+ip vrf VLAN889
+ description --- VRF (TENANT-B): vrf for VLAN889
+!
+ip domain name local
+!
+login on-success log
+!
+subscriber templating
+!
+multilink bundle-name authenticated
+!
+license udi pid ISRV sn 9GGHOHFZBDF
+diagnostic bootup level minimal
+memory free low-watermark processor 69838
+!
+spanning-tree extend system-id
+!
+redundancy
+!
+lldp run
+!
+interface Port-channel1
+ description --- Trunk (VLAN001): conneciotn to fabric
+ no ip address
+ load-interval 60
+ no negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface Port-channel1.6
+ description --- Virtual (VLAN006, TENANT-A): "TENANT-A:VLAN6"
+ encapsulation dot1Q 6
+ ip vrf forwarding VLAN006
+ ip address 172.12.23.103 255.255.255.0
+!
+interface Port-channel1.23
+ description --- Virtual (VLAN023, VRF: TENANT-B): "TENANT-B:VLAN023"
+ encapsulation dot1Q 23
+ ip vrf forwarding VLAN023
+ ip address 192.168.23.103 255.255.255.0
+!
+interface Port-channel1.137
+ description --- Virtual (VLAN137, VRF: TENANT-A): "TENANT-A:VLAN137"
+ encapsulation dot1Q 137
+ ip vrf forwarding VLAN137
+ ip address 192.168.12.103 255.255.255.0
+!
+interface Port-channel1.889
+ description --- Virtual (VLAN889, VRF: TENANT-B): "TENANT-B:VLAN889"
+ encapsulation dot1Q 889
+ ip vrf forwarding VLAN889
+ ip address 10.1.1.103 255.255.255.0
+!
+interface Port-channel1.1026
+ description --- Virtual (VLAN1026, TENANT-A): "TENANT-A:VLAN1026"
+ encapsulation dot1Q 1026
+ ip vrf forwarding VLAN1026
+ ip address 10.128.14.103 255.255.255.0
+!
+interface GigabitEthernet1
+ description --- Port-channel (Multi-Home): connection to swLeaf03:Ethernet5
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet2
+ description --- Port-channel (Multi-Home): connection to swLeaf04:Ethernet5
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet3
+ description --- Port-channel (Multi-Home): connection to swBorderLeaf01:Ethernet5
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+ channel-group 1 mode active
+!
+interface GigabitEthernet4
+ no ip address
+ shutdown
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+ip forward-protocol nd
+ip http server
+ip http authentication local
+ip http secure-server
+!
+ip route vrf VLAN137 0.0.0.0 0.0.0.0 192.168.12.1
+ip route vrf VLAN1026 0.0.0.0 0.0.0.0 10.128.14.1
+ip route vrf VLAN006 0.0.0.0 0.0.0.0 172.12.23.1
+ip route vrf VLAN023 0.0.0.0 0.0.0.0 192.168.23.1
+ip route vrf VLAN889 0.0.0.0 0.0.0.0 10.1.1.1
+!
+control-plane
+!
+mgcp behavior rsip-range tgcp-only
+mgcp behavior comedia-role none
+mgcp behavior comedia-check-media-src disable
+mgcp behavior comedia-sdp-force disable
+!
+mgcp profile default
+!
+line con 0
+ exec-timeout 0 0
+ stopbits 1
+line aux 0
+ stopbits 1
+line vty 0 4
+ login
+ transport input ssh
+!
+call-home
+ ! If contact email address in call-home is configured as sch-smart-licensing@cisco.com
+ ! the email address configured in Cisco Smart License Portal will be used as contact email address to send SCH notifications.
+ contact-email-addr sch-smart-licensing@cisco.com
+ profile "CiscoTAC-1"
+  active
+  destination transport-method http
+!
+end
+```
+
+#### Сервер `fwBorder01`
+```
+!
+! Last configuration change at 09:35:33 UTC Sat Oct 3 2026
+!
+version 17.3
+service timestamps debug datetime msec
+service timestamps log datetime msec
+! Call-home is enabled by Smart-Licensing.
+service call-home
+platform qfp utilization monitor load 80
+platform punt-keepalive disable-kernel-core
+platform console serial
+!
+hostname fwBorder01
+!
+boot-start-marker
+boot-end-marker
+!
+vrf definition TENANT-A
+ description --- VRF: Tenant A RIB
+ rd 65101:101
+ !
+ address-family ipv4
+  export map rmapLEAKING:TENANT-A
+  route-target export 65101:101
+  route-target import 65101:101
+ exit-address-family
+!
+vrf definition TENANT-B
+ description --- VRF: Tenant B RIB
+ rd 65102:102
+ !
+ address-family ipv4
+  export map rmapLEAKING:TENANT-B
+  route-target export 65102:102
+  route-target import 65102:102
+ exit-address-family
+!
+no aaa new-model
+!
+ip domain name local
+!
+login on-success log
+!
+subscriber templating
+!
+multilink bundle-name authenticated
+!
+license udi pid ISRV sn 9VSRSPWWB34
+diagnostic bootup level minimal
+memory free low-watermark processor 69838
+!
+spanning-tree extend system-id
+!
+redundancy
+!
+lldp run
+!
+interface GigabitEthernet1
+ description --- Trunk (VLAN001): connection to swBorderLeaf01:Ethernet4
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet1.4001
+ description --- Virtual (VLAN4001, no VRF): interconnection to Tenant A
+ encapsulation dot1Q 4001
+ vrf forwarding TENANT-A
+ ip address 10.1.101.0 255.255.255.254
+ ip nat inside
+ bfd interval 100 min_rx 100 multiplier 3
+!
+interface GigabitEthernet1.4002
+ description --- Virtual (VLAN4002, no VRF): interconnection to Tenant B
+ encapsulation dot1Q 4002
+ vrf forwarding TENANT-B
+ ip address 10.1.102.0 255.255.255.254
+ ip nat inside
+ bfd interval 100 min_rx 100 multiplier 3
+!
+interface GigabitEthernet2
+ description --- Access (VLAN001): Connection to Internet
+ ip dhcp client client-id ascii 9VSRSPWWB34
+ ip address dhcp
+ ip nat outside
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet3
+ no ip address
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet4
+ no ip address
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+router bgp 65100
+ bgp router-id 10.1.100.1
+ bgp log-neighbor-changes
+ bgp update-delay 1
+ bgp graceful-restart restart-time 300
+ bgp graceful-restart
+ timers bgp 3 9
+ !
+ address-family vpnv4
+ exit-address-family
+ !
+ address-family ipv4 vrf TENANT-A
+  neighbor 10.1.101.1 remote-as 65001
+  neighbor 10.1.101.1 description --- Peer: connection between System-on-a-Stick and Leaf switches in VRF TENANT-A
+  neighbor 10.1.101.1 update-source GigabitEthernet1.4001
+  neighbor 10.1.101.1 fall-over bfd
+  neighbor 10.1.101.1 activate
+  neighbor 10.1.101.1 default-originate
+ exit-address-family
+ !
+ address-family ipv4 vrf TENANT-B
+  neighbor 10.1.102.1 remote-as 65001
+  neighbor 10.1.102.1 description --- Peer: connection between System-on-a-Stick and Leaf switches in VRF TENANT-B
+  neighbor 10.1.102.1 update-source GigabitEthernet1.4002
+  neighbor 10.1.102.1 fall-over bfd
+  neighbor 10.1.102.1 activate
+  neighbor 10.1.102.1 default-originate
+ exit-address-family
+!
+ip forward-protocol nd
+ip http server
+ip http authentication local
+ip http secure-server
+ip http client source-interface GigabitEthernet2
+!
+ip nat inside source list aclNAT:TENANT-A interface GigabitEthernet2 vrf TENANT-A overload
+ip nat inside source list aclNAT:TENANT-B interface GigabitEthernet2 vrf TENANT-B overload
+ip route vrf TENANT-A 0.0.0.0 0.0.0.0 10.1.10.2 global
+ip route vrf TENANT-B 0.0.0.0 0.0.0.0 10.1.10.2 global
+ip route 0.0.0.0 0.0.0.0 dhcp
+!
+ip access-list standard aclNAT:TENANT-A
+ 10 permit any
+!
+ip access-list standard aclNAT:TENANT-B
+ 10 permit any
+!
+ip prefix-list lstLEAKING:TENANT-A seq 5 permit 192.168.12.0/24
+!
+ip prefix-list lstLEAKING:TENANT-B seq 5 permit 10.1.1.0/24
+!
+route-map rmapLEAKING:TENANT-B permit 10
+ match ip address prefix-list lstLEAKING:TENANT-B
+ set extcommunity rt 65101:101
+!
+route-map rmapLEAKING:TENANT-B permit 20
+!
+route-map rmapLEAKING:TENANT-A permit 10
+ match ip address prefix-list lstLEAKING:TENANT-A
+ set extcommunity rt 65102:102
+!
+route-map rmapLEAKING:TENANT-A permit 20
+!
+control-plane
+!
+mgcp behavior rsip-range tgcp-only
+mgcp behavior comedia-role none
+mgcp behavior comedia-check-media-src disable
+mgcp behavior comedia-sdp-force disable
+!
+mgcp profile default
+!
+line con 0
+ exec-timeout 0 0
+ stopbits 1
+line aux 0
+ stopbits 1
+line vty 0 4
+ login
+ transport input ssh
+!
+call-home
+ ! If contact email address in call-home is configured as sch-smart-licensing@cisco.com
+ ! the email address configured in Cisco Smart License Portal will be used as contact email address to send SCH notifications.
+ contact-email-addr sch-smart-licensing@cisco.com
+ profile "CiscoTAC-1"
+  active
+  destination transport-method http
+!
+end
 ```
