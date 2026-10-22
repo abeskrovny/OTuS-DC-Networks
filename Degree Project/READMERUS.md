@@ -644,6 +644,7 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 ![Схема сети](OoB01.png)
 
 На данный момент необходимо создать скелет для дальнейшей работоспособности сети управления, ввиду чего конфигурации коммутаторов весьма тривиальны:
+
 <details>
   <summary>swOoBCCore01</summary>
 ```
@@ -662,6 +663,7 @@ vlan 100
 !
 
 ```
+
 </details>
 
 <details>
@@ -695,8 +697,9 @@ interface Lo0
   ip address 10.1.100.1/24
   no shutdown
 ```
+
 </details>
-hostname swOoBAccess01
+
 
 
 
