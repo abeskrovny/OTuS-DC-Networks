@@ -573,7 +573,7 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 | Backend | swBESpine02 | Spine | Loopback0 | `10.1.202.2/32` |
 | ... |
 | Backend | swBESpine32 | Spine | Loopback0 | `10.1.202.32/32` |
-
+|---|
 
 
 
