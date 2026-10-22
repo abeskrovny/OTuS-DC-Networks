@@ -601,11 +601,11 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 | Frontend | swFESpine01 | Spine | Loopback0 | `10.1.2.1/32` | `4200002001` |
 | Frontend | swFESpine02 | Spine | Loopback0 | `10.1.2.2/32` | `4200002001` |
 | Frontend | swFESpine03 | Spine | Loopback0 | `10.1.2.3/32` | `4200002001` |
-| OoB | swOoBAccess01 | Access | VLAN100 | `10.1.101.1/32` | - |
-| OoB | swOoBAccess02 | Access | VLAN100 | `10.1.101.2/32` | - |
+| OoB | swOoBAccess01 | Access | VLAN100 | `10.1.100.1/32` | - |
+| OoB | swOoBAccess02 | Access | VLAN100 | `10.1.100.2/32` | - |
 | ... |
-| OoB | swOoBAccess01 | Access | VLAN100 | `10.1.101.94/32` | - |
-| OoB | swOoBCCore01 | Collapsed Core | VLAN100 | `10.1.102.1/32` | - |
+| OoB | swOoBAccess01 | Access | VLAN100 | `10.1.100.94/32` | - |
+| OoB | swOoBCCore01 | Collapsed Core | VLAN100 | `10.1.100.201/32` | - |
 | Backend | swBEComputeLeaf01 | Leaf | Loopback0 | `10.1.201.1/32` | `4200201001` |
 | Backend | swBEComputeLeaf02 | Leaf | Loopback0 | `10.1.201.2/32` | `4200201002` |
 | ... |
@@ -641,4 +641,62 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 
 Внутри данного изолированного сегмента доступа размещается консолидированный сервер автоматизации (ZTP/DHCP/Ansible Control Node). Такое размещение гарантирует, что сервер находится в едином широковещательном L2-домене с портами управления инициализируемого сетевого оборудования. Это позволяет беспрепятственно обрабатывать первичные широковещательные DHCP-запросы от «голых» коммутаторов, находящихся в заводском режиме Zero Touch Provisioning, и осуществлять их автоматический бутстрап до момента запуска основных контуров фабрики.
 
-![Схема сети](OoB01.png){width=30% .center}
+![Схема сети](OoB01.png)
+
+На данный момент необходимо создать скелет для дальнейшей работоспособности сети управления, ввиду чего конфигурации коммутаторов весьма тривиальны:
+<details>
+  <summary>swOoBCCore01</summary>
+```
+hostname swOoBCCore01
+!
+ip domain-name OoB.local
+!
+feature interface-vlan
+feature lacp
+feature lldp
+feature vtp
+!
+vlan 100
+  name NetMGMT
+!
+
+```
+</details>
+
+<details>
+  <summary>swOoBAccess01</summary>
+```
+hostname swOoBAccess01
+!
+ip domain-name OoB.local
+!
+feature interface-vlan
+feature lacp
+feature lldp
+feature vtp
+!
+vlan 100
+  name NetMGMT
+!
+interface ethernet1/1-48
+  description --- Access (VLAN100): OoB Network Management Edge
+  switchport
+  switchport access vlan 100
+  spanning-tree port type edge
+  spanning-tree bpduguard enable
+  load-interval counter 1 60
+  no shutdown
+!
+interface Lo0
+  description --- Virtual (VLAN100): OoB Network Management Edge
+  load-interval counter 1 60
+  ip address 10.1.100.1/24
+  no shutdown
+```
+</details>
+hostname swOoBAccess01
+
+
+
+
+{width=30% .center}
