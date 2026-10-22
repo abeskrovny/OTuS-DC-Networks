@@ -646,7 +646,7 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 На данный момент необходимо создать скелет для дальнейшей работоспособности сети управления, ввиду чего конфигурации коммутаторов весьма тривиальны:
 
 <details>
-  <summary>**swOoBCCore01** - коммутатор ядра</summary>
+  <summary>swOoBCCore01</summary>
 
 ```
 
@@ -668,7 +668,7 @@ vlan 100
 </details>
 
 <details>
-  <summary>**swOoBAccess01** - коммутатор доступа</summary>
+  <summary>swOoBAccess01</summary>
 
 ```
 
