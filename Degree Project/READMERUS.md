@@ -560,8 +560,41 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 
 *Таблица 5. Распределение IPv4-адресов сетеобразующим оборудованием*
 
-| **Зона/сеть** | **Имя хоста** | **Роль** | **Название интерфейса** | **IPv4-адрес** |
+| **Фабрика** | **Имя хоста** | **Роль** | **Название интерфейса** | **IPv4-адрес** |
 |:---:|:---|:---:|:---:|---:|
+| Frontend | swFEAIServersLeaf01 | Leaf | Loopback0 | `10.1.0.1/32` |
+| Frontend | swFEAIServersLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.1/32` |
+| Frontend | swFEAIServersLeaf02 | Leaf | Loopback0 | `10.1.0.2/32` |
+| Frontend | swFEAIServersLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.1/32` |
+| ... |
+| Frontend | swFEAIServersLeaf05 | Leaf | Loopback0 | `10.1.0.5/32` |
+| Frontend | swFEAIServersLeaf05 | MLAG VTEP | Loopback1 | `10.1.1.3/32` |
+| Frontend | swFEAIServersLeaf06 | Leaf | Loopback0 | `10.1.0.6/32` |
+| Frontend | swFEAIServersLeaf06 | MLAG VTEP | Loopback1 | `10.1.1.3/32` |
+| Frontend | swFEAISDSLeaf01 | Leaf | Loopback0 | `10.1.0.101/32` |
+| Frontend | swFEAISDSLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.101/32` |
+| Frontend | swFEAISDSLeaf02 | Leaf | Loopback0 | `10.1.0.102/32` |
+| Frontend | swFEAISDSLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.101/32` |
+| Frontend | swFEAISDSLeaf03 | Leaf | Loopback0 | `10.1.0.103/32` |
+| Frontend | swFEAISDSLeaf03 | MLAG VTEP | Loopback1 | `10.1.1.102/32` |
+| Frontend | swFEAISDSLeaf04 | Leaf | Loopback0 | `10.1.0.104/32` |
+| Frontend | swFEAISDSLeaf04 | MLAG VTEP | Loopback1 | `10.1.1.102/32` |
+| Frontend | swFEInfraLeaf01 | Leaf | Loopback0 | `10.1.0.201/32` |
+| Frontend | swFEInfraLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.201/32` |
+| Frontend | swFEInfraLeaf02 | Leaf | Loopback0 | `10.1.0.202/32` |
+| Frontend | swFEInfraLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.201/32` |
+| Frontend | swFEBorderLeaf01 | Leaf | Loopback0 | `10.1.0.251/32` |
+| Frontend | swFEBorderLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.251/32` |
+| Frontend | swFEBorderLeaf02 | Leaf | Loopback0 | `10.1.0.252/32` |
+| Frontend | swFEBorderLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.251/32` |
+| Frontend | swFESpine01 | Spine | Loopback0 | `10.1.2.1/32` |
+| Frontend | swFESpine02 | Spine | Loopback0 | `10.1.2.2/32` |
+| Frontend | swFESpine03 | Spine | Loopback0 | `10.1.2.3/32` |
+| OoB | swOoBAccess01 | Access | MGMT | `10.1.101.1/32` |
+| OoB | swOoBAccess02 | Access | MGMT | `10.1.101.2/32` |
+| ... |
+| OoB | swOoBAccess01 | Access | MGMT | `10.1.101.94/32` |
+| OoB | swOoBCCore01 | Collapsed Core | MGMT | `10.1.102.1/32` |
 | Backend | swBEComputeLeaf01 | Leaf | Loopback0 | `10.1.201.1/32` |
 | Backend | swBEComputeLeaf02 | Leaf | Loopback0 | `10.1.201.2/32` |
 | ... |
@@ -573,7 +606,7 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 | Backend | swBESpine02 | Spine | Loopback0 | `10.1.202.2/32` |
 | ... |
 | Backend | swBESpine32 | Spine | Loopback0 | `10.1.202.32/32` |
-|---|
+
 
 
 
