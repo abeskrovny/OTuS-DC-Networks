@@ -546,9 +546,7 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 Для подстилающей сети и OoB будем использовать приватную IPv4-сеть класса A 10.0.0.0/8.
 
 Структура адреса:
-`10.<DC>.<Type>.<Host>`
-
-где:
+`10.<DC>.<Type>.<Host>`, где:
 - <DC> - определяет порядковый номер сайта/ЦОД (2 байта);
 - <Type> - Тип устройства/сервиса (2 байта);
     - 00 - 99: Контекст безопасности фронтенда;
@@ -556,63 +554,72 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
     - 200 - 254: Контекст безопасности AI-фабрики.
 - <Host> - Номер ноды.
 
-Результирующая таблица распределения IP-адресов сетевого оборудования предствалена в следующей таблице:
+В рамках проектирования транспортной подложки (Underlay) AI-фабрики и конвергентного фронтенда предлагается использование протокола eBGP Unnumbered на базе стандартов RFC 5549 (IPv6 Link-Local peering для IPv4 префиксов).
+
+Выбор eBGP обусловлен его превосходной масштабируемостью в многоярусных архитектурах Clos (вплоть до 3-Stage: Leaf - Spine - Super Spine), простотой предотвращения логических петель через анализ атрибута AS_PATH и нативной поддержкой высокоэффективной балансировки трафика ECMP, что полностью исключает риски возникновения заторов (congestion) при интенсивном межсерверном обмене.
+
+Распределение автономных систем (ASN) спроектировано по гибридному принципу с учетом топологических особенностей контуров.
+
+В AI-кластере, где вычислительные узлы подключаются по изолированным L3-интерфейсам, применяется дискретная схема, закрепляющая за каждым одиночным Leaf-коммутатором уникальный номер ASN. Это гарантирует абсолютную симметрию трасс и одинаковую длину пути (AS-Hop Count) между любыми ускорителями в сети.
+
+В фронтенд-кластере, опирающемся на технологию Arista MLAG, за каждой парой отказоустойчивых коммутаторов закрепляется общий номер ASN. Для исключения изоляции маршрутов при локальных авариях аплинков, межкоммутаторный Peer-Link внутри каждой MLAG-пары конфигурируется с использованием iBGP-сессии, в то время как вертикальное взаимодействие с ярусами Spine и Super Spine реализуется строго посредством eBGP-стыков.
+
+Использование выделенного диапазона 32-битных приватных ASN (от 4200000000) обеспечивает независимость адресации и бесшовный потенциал горизонтального расширения фабрики без перепроектирования логической структуры».
+
+Результирующая таблица распределения IP-адресов сетевого оборудования в подстилающей сети и их ASN
+предствалена в следующей таблице:
 
 *Таблица 5. Распределение IPv4-адресов сетеобразующим оборудованием*
 
-| **Фабрика** | **Имя хоста** | **Роль** | **Название интерфейса** | **IPv4-адрес** |
-|:---:|:---|:---:|:---:|---:|
-| Frontend | swFEAIServersLeaf01 | Leaf | Loopback0 | `10.1.0.1/32` |
-| Frontend | swFEAIServersLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.1/32` |
-| Frontend | swFEAIServersLeaf02 | Leaf | Loopback0 | `10.1.0.2/32` |
-| Frontend | swFEAIServersLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.1/32` |
+| **Фабрика** | **Имя хоста** | **Роль** | **Название интерфейса** | **IPv4-адрес** | **ASN** |
+|:---:|:---|:---:|:---:|---:|:---:|
+| Frontend | swFEAIServersLeaf01 | Leaf | Loopback0 | `10.1.0.1/32` | `4200000001` |
+| Frontend | swFEAIServersLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.1/32` | `4200000001` | 
+| Frontend | swFEAIServersLeaf02 | Leaf | Loopback0 | `10.1.0.2/32` | `4200000001` |
+| Frontend | swFEAIServersLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.1/32` | `4200000001` |
 | ... |
-| Frontend | swFEAIServersLeaf05 | Leaf | Loopback0 | `10.1.0.5/32` |
-| Frontend | swFEAIServersLeaf05 | MLAG VTEP | Loopback1 | `10.1.1.3/32` |
-| Frontend | swFEAIServersLeaf06 | Leaf | Loopback0 | `10.1.0.6/32` |
-| Frontend | swFEAIServersLeaf06 | MLAG VTEP | Loopback1 | `10.1.1.3/32` |
-| Frontend | swFEAISDSLeaf01 | Leaf | Loopback0 | `10.1.0.101/32` |
-| Frontend | swFEAISDSLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.101/32` |
-| Frontend | swFEAISDSLeaf02 | Leaf | Loopback0 | `10.1.0.102/32` |
-| Frontend | swFEAISDSLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.101/32` |
-| Frontend | swFEAISDSLeaf03 | Leaf | Loopback0 | `10.1.0.103/32` |
-| Frontend | swFEAISDSLeaf03 | MLAG VTEP | Loopback1 | `10.1.1.102/32` |
-| Frontend | swFEAISDSLeaf04 | Leaf | Loopback0 | `10.1.0.104/32` |
-| Frontend | swFEAISDSLeaf04 | MLAG VTEP | Loopback1 | `10.1.1.102/32` |
-| Frontend | swFEInfraLeaf01 | Leaf | Loopback0 | `10.1.0.201/32` |
-| Frontend | swFEInfraLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.201/32` |
-| Frontend | swFEInfraLeaf02 | Leaf | Loopback0 | `10.1.0.202/32` |
-| Frontend | swFEInfraLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.201/32` |
-| Frontend | swFEBorderLeaf01 | Leaf | Loopback0 | `10.1.0.251/32` |
-| Frontend | swFEBorderLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.251/32` |
-| Frontend | swFEBorderLeaf02 | Leaf | Loopback0 | `10.1.0.252/32` |
-| Frontend | swFEBorderLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.251/32` |
-| Frontend | swFESpine01 | Spine | Loopback0 | `10.1.2.1/32` |
-| Frontend | swFESpine02 | Spine | Loopback0 | `10.1.2.2/32` |
-| Frontend | swFESpine03 | Spine | Loopback0 | `10.1.2.3/32` |
-| OoB | swOoBAccess01 | Access | MGMT | `10.1.101.1/32` |
-| OoB | swOoBAccess02 | Access | MGMT | `10.1.101.2/32` |
+| Frontend | swFEAIServersLeaf05 | Leaf | Loopback0 | `10.1.0.5/32` | `4200000003` |
+| Frontend | swFEAIServersLeaf05 | MLAG VTEP | Loopback1 | `10.1.1.3/32` | `4200000003` |
+| Frontend | swFEAIServersLeaf06 | Leaf | Loopback0 | `10.1.0.6/32` | `4200000003` |
+| Frontend | swFEAIServersLeaf06 | MLAG VTEP | Loopback1 | `10.1.1.3/32` | `4200000003` |
+| Frontend | swFEAISDSLeaf01 | Leaf | Loopback0 | `10.1.0.101/32` | `4200000101` |
+| Frontend | swFEAISDSLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.101/32` | `4200000101` |
+| Frontend | swFEAISDSLeaf02 | Leaf | Loopback0 | `10.1.0.102/32` | `4200000101` |
+| Frontend | swFEAISDSLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.101/32` | `4200000101` |
+| Frontend | swFEAISDSLeaf03 | Leaf | Loopback0 | `10.1.0.103/32` | `4200000102` |
+| Frontend | swFEAISDSLeaf03 | MLAG VTEP | Loopback1 | `10.1.1.102/32` | `4200000102` |
+| Frontend | swFEAISDSLeaf04 | Leaf | Loopback0 | `10.1.0.104/32` | `4200000102` |
+| Frontend | swFEAISDSLeaf04 | MLAG VTEP | Loopback1 | `10.1.1.102/32` | `4200000102` |
+| Frontend | swFEInfraLeaf01 | Leaf | Loopback0 | `10.1.0.201/32` | `4200000201` |
+| Frontend | swFEInfraLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.201/32` | `4200000201` |
+| Frontend | swFEInfraLeaf02 | Leaf | Loopback0 | `10.1.0.202/32` | `4200000201` |
+| Frontend | swFEInfraLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.201/32` | `4200000201` |
+| Frontend | swFEBorderLeaf01 | Leaf | Loopback0 | `10.1.0.251/32` | `4200000251` |
+| Frontend | swFEBorderLeaf01 | MLAG VTEP | Loopback1 | `10.1.1.251/32` | `4200000251` |
+| Frontend | swFEBorderLeaf02 | Leaf | Loopback0 | `10.1.0.252/32` | `4200000251` |
+| Frontend | swFEBorderLeaf02 | MLAG VTEP | Loopback1 | `10.1.1.251/32` | `4200000251` |
+| Frontend | swFESpine01 | Spine | Loopback0 | `10.1.2.1/32` | `4200001001` |
+| Frontend | swFESpine02 | Spine | Loopback0 | `10.1.2.2/32` | `4200001001` |
+| Frontend | swFESpine03 | Spine | Loopback0 | `10.1.2.3/32` | `4200001001` |
+| OoB | swOoBAccess01 | Access | MGMT | `10.1.101.1/32` | - |
+| OoB | swOoBAccess02 | Access | MGMT | `10.1.101.2/32` | - |
 | ... |
-| OoB | swOoBAccess01 | Access | MGMT | `10.1.101.94/32` |
-| OoB | swOoBCCore01 | Collapsed Core | MGMT | `10.1.102.1/32` |
-| Backend | swBEComputeLeaf01 | Leaf | Loopback0 | `10.1.201.1/32` |
-| Backend | swBEComputeLeaf02 | Leaf | Loopback0 | `10.1.201.2/32` |
+| OoB | swOoBAccess01 | Access | MGMT | `10.1.101.94/32` | - |
+| OoB | swOoBCCore01 | Collapsed Core | MGMT | `10.1.102.1/32` | - |
+| Backend | swBEComputeLeaf01 | Leaf | Loopback0 | `10.1.201.1/32` | `4200201001` |
+| Backend | swBEComputeLeaf02 | Leaf | Loopback0 | `10.1.201.2/32` | `4200201002` |
 | ... |
-| Backend | swBEComputeLeaf32 | Leaf | Loopback0 | `10.1.201.32/32` |
-| Backend | swBEStorageLeaf01 | Leaf | Loopback0 | `10.1.201.101/32` |
-| Backend | swBEStorageLeaf02 | Leaf | Loopback0 | `10.1.201.102/32` |
+| Backend | swBEComputeLeaf32 | Leaf | Loopback0 | `10.1.201.32/32` | `4200201032` |
+| Backend | swBEStorageLeaf01 | Leaf | Loopback0 | `10.1.201.101/32` | `4200201101` |
+| Backend | swBEStorageLeaf02 | Leaf | Loopback0 | `10.1.201.102/32` | `4200201102` |
 | ... |
-| Backend | swBESpine01 | Spine | Loopback0 | `10.1.202.1/32` |
-| Backend | swBESpine02 | Spine | Loopback0 | `10.1.202.2/32` |
+| Backend | swBEStorageLeaf02 | Leaf | Loopback0 | `10.1.201.132/32` | `4200201132` |
+| Backend | swBESpine01 | Spine | Loopback0 | `10.1.202.1/32` | `4200202001` |
+| Backend | swBESpine02 | Spine | Loopback0 | `10.1.202.2/32` | `4200202001` |
 | ... |
-| Backend | swBESpine32 | Spine | Loopback0 | `10.1.202.32/32` |
+| Backend | swBESpine32 | Spine | Loopback0 | `10.1.202.32/32` | `4200202001` |
 
-
-
-
-
-
-
+### Настройка системы
 
 
 ### Настройка Spine (Arista)
