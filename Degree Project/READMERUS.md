@@ -647,6 +647,7 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 <details>
   <summary>swOoBCCore01</summary>
 ```
+
 hostname swOoBCCore01
 !
 ip domain-name OoB.local
@@ -666,6 +667,7 @@ vlan 100
 <details>
   <summary>swOoBAccess01</summary>
 ```
+
 hostname swOoBAccess01
 !
 ip domain-name OoB.local
