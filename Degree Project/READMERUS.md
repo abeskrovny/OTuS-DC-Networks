@@ -646,7 +646,7 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 На данный момент необходимо создать скелет для дальнейшей работоспособности сети управления, ввиду чего конфигурации коммутаторов весьма тривиальны:
 
 <details>
-  <summary>swOoBAccess01</summary>
+  <summary>fwInternal01</summary>
 
 ```
 
@@ -692,6 +692,8 @@ interface Vlan100
   description --- Virtual (VLAN100): OoB Network Management Edge
   no shutdown
   ip address 10.1.100.201/24
+!
+ip route 0.0.0.0/0 10.1.100.254
 
 ```
   
@@ -735,12 +737,14 @@ interface vlan100
   load-interval counter 1 60
   ip address 10.1.100.1/24
   no shutdown
+!
+ip route 0.0.0.0/0 10.1.100.254
 
 ```
   
 </details>
 
-
+Когда мы получили
 
 
 
