@@ -646,6 +646,18 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 На данный момент необходимо создать скелет для дальнейшей работоспособности сети управления, ввиду чего конфигурации коммутаторов весьма тривиальны:
 
 <details>
+  <summary>swOoBAccess01</summary>
+
+```
+
+hostname fwInternal01
+!
+
+```
+  
+</details>
+
+<details>
   <summary>swOoBCCore01</summary>
 
 ```
@@ -662,6 +674,24 @@ feature vtp
 vlan 100
   name NetMGMT
 !
+interface Ethernet1/1
+  description --- Trunk (VLAN001): connection to swOoBAccess01:e1/7
+  switchport
+  switchport mode trunk
+  load-interval counter 1 60
+  no shutdown
+!
+interface Ethernet1/7
+  description --- Trunk (VLAN001): connection to fwInternal01
+  switchport
+  switchport mode trunk
+  load-interval counter 1 60
+  no shutdown
+!
+interface Vlan100
+  description --- Virtual (VLAN100): OoB Network Management Edge
+  no shutdown
+  ip address 10.1.100.201/24
 
 ```
   
@@ -684,7 +714,7 @@ feature vtp
 vlan 100
   name NetMGMT
 !
-interface ethernet1/1-48
+interface ethernet1/1-6
   description --- Access (VLAN100): OoB Network Management Edge
   switchport
   switchport access vlan 100
@@ -693,7 +723,14 @@ interface ethernet1/1-48
   load-interval counter 1 60
   no shutdown
 !
-interface Lo0
+interface ethernet1/7
+  description --- Trunk (VLAN001): connection to swOoBCCore01:e1/1
+  switchport
+  switchport mode trunk
+  load-interval counter 1 60
+  no shutdown
+!
+interface vlan100
   description --- Virtual (VLAN100): OoB Network Management Edge
   load-interval counter 1 60
   ip address 10.1.100.1/24
@@ -702,6 +739,10 @@ interface Lo0
 ```
   
 </details>
+
+
+
+
 
 
 
