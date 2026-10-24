@@ -646,11 +646,63 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 На данный момент необходимо создать скелет для дальнейшей работоспособности сети управления, ввиду чего конфигурации коммутаторов весьма тривиальны:
 
 <details>
-  <summary>fwInternal01</summary>
+  <summary>Конфигурация fwEXT01 (используется Cisco IOS)</summary>
 
 ```
 
-hostname fwInternal01
+service timestamps debug datetime msec
+service timestamps log datetime msec
+service password-encryption
+!
+hostname fwEXT01
+!
+ip domain name Frontend.local
+!
+lldp run
+cdp run
+!
+interface GigabitEthernet1
+ description --- L3: connection to Internet
+ ip dhcp client client-id ascii fwEXT01
+ ip address dhcp
+ ip nat outside
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet2
+ description --- L3 p2p (no VLAN, no VRF): connection to fwINT01:Gi1
+ ip address 192.168.0.1 255.255.255.0
+ ip nat inside
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+router bgp 4200000000
+ bgp router-id 10.1.0.0
+ bgp log-neighbor-changes
+ bgp update-delay 1
+ bgp graceful-restart restart-time 300
+ bgp graceful-restart
+ timers bgp 3 9
+ neighbor fwINT01 peer-group
+ neighbor fwINT01 remote-as 4200000000
+ neighbor fwINT01 fall-over bfd
+ neighbor 192.168.0.2 peer-group fwINT01
+ !
+ address-family ipv4
+  neighbor fwINT01 default-originate
+  neighbor 192.168.0.2 activate
+ exit-address-family
+!
+ip nat inside source list aclNAT:GRT interface GigabitEthernet1 overload
+ip route 0.0.0.0 0.0.0.0 dhcp
+ip ssh version 2
+!
+ip access-list standard aclNAT:GRT
+ 10 permit any
 !
 
 ```
@@ -658,7 +710,65 @@ hostname fwInternal01
 </details>
 
 <details>
-  <summary>swOoBCCore01</summary>
+  <summary>Конфигурация fwINT01 (используется Cisco IOS)</summary>
+
+```
+
+service timestamps debug datetime msec
+service timestamps log datetime msec
+service password-encryption
+!
+hostname fwINT01
+!
+ip domain name Frontend.local
+!
+lldp run
+cdp run
+!
+interface GigabitEthernet1
+ ip address 192.168.0.2 255.255.255.0
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet2
+ description --- Trunk (VLAN001): connection to swOoBCCore01:Eth1/7
+ no ip address
+ load-interval 60
+ negotiation auto
+ no mop enabled
+ no mop sysid
+!
+interface GigabitEthernet2.100
+ description --- Virtual (VLAN100): connection to NetMGMT segment
+ encapsulation dot1Q 100 native
+ ip address 10.1.100.254 255.255.255.0
+!
+router bgp 4200000000
+ bgp router-id 10.254.0.0
+ bgp log-neighbor-changes
+ bgp update-delay 1
+ bgp graceful-restart restart-time 300
+ bgp graceful-restart
+ timers bgp 3 9
+ neighbor fwEXT01 peer-group
+ neighbor fwEXT01 remote-as 4200000000
+ neighbor fwEXT01 fall-over bfd
+ neighbor 192.168.0.1 peer-group fwEXT01
+ !
+ address-family ipv4
+  network 10.1.100.0 mask 255.255.255.0
+  neighbor 192.168.0.1 activate
+ exit-address-family
+!
+ip ssh version 2
+
+```
+  
+</details>
+
+<details>
+  <summary>Конфигурация swOoBCCore01 (используется Cisco Nexus 9000v)</summary>
 
 ```
 
@@ -674,10 +784,11 @@ feature vtp
 vlan 100
   name NetMGMT
 !
-interface Ethernet1/1
+interface Ethernet1/1-2
   description --- Trunk (VLAN001): connection to swOoBAccess01:e1/7
   switchport
   switchport mode trunk
+  switchport trunk native vlan 100
   load-interval counter 1 60
   no shutdown
 !
@@ -685,6 +796,7 @@ interface Ethernet1/7
   description --- Trunk (VLAN001): connection to fwInternal01
   switchport
   switchport mode trunk
+  switchport trunk native vlan 100
   load-interval counter 1 60
   no shutdown
 !
@@ -729,6 +841,7 @@ interface ethernet1/7
   description --- Trunk (VLAN001): connection to swOoBCCore01:e1/1
   switchport
   switchport mode trunk
+  switchport trunk native vlan 100
   load-interval counter 1 60
   no shutdown
 !
@@ -744,10 +857,170 @@ ip route 0.0.0.0/0 10.1.100.254
   
 </details>
 
-Когда мы получили
+Транки принципиально имеют VLAN по-умолчанию 100, так как для раскатки самой сети OoB необходимо состояние аксеса на стороне клиента в сегменте сервисного сервера.
+
+В результате мы получили опорную точку для инсталляции сервисного сервера. В качестве операционной системы будем использовать Ubuntu 22.0. Установка самой системы не входит в объем данного материала, поэтому будем считать, что система работает и на ней есть связанность с Интернетом.
+
+Для построения архитектуры ZTP (Zero Touch Provisioning) для коммутаторов Arista на базе Ubuntu  понадобится связка из трех ключевых компонентов: DHCP-сервер (для выдачи IP и указания пути к скрипту инициализации), HTTP-сервер (для отдачи самих скриптов и образов EOS) и Ansible (для последующей конфигурации):
+1. **DHCP-сервер**: isc-dhcp-server (классический, максимально надежный для ZTP) или Kea DHCP (современная замена от ISC). В примере ниже используем проверенный временем isc-dhcp-server.
+2. **HTTP-сервер**: Nginx (легковесный и быстрый, для обслуживания ZTP-скриптов).
+3. **Автоматизация**: Ansible + коллекция arista.avd (Arista Validated Designs) для удобного управления конфигурациями Arista EOS.
+
+Всвязи с особенностями работы сетевого стека, мой EVE-NG, работающий поверх VMware ESXi, не позволяет напрямую подключиться к сервисному серверу. Чтобы обойти это (а связанность у меня присутствует), я запущу SSH в реверсивном режиме. Для этого со стороны сервера пробросим на удаленный хост реверсивный туннель:
+```bash
+ssh -fN -R 2222:localhost:22 user@IP
+```
+
+где:
+- `-f` (Background) — переводит процесс SSH в фоновый режим (background) прямо перед выполнением команды. При этом SSH затребует пароль или парольную фразу до того, как уйти в фон.
+- `-N` (No command) — указывает SSH не выполнять удаленную команду.
+- `-R` (Reverse shell) - создает рекурсивный туннель SSH.
+
+В результате этих действий на хосте `IP` будет создана траверса `2222:localhost:22`: которая означает, что входящий 22/TCP порт туннеля будет проброшен на 2222/TCP для приема соединений на хосте (localhost), к которому пробрасывался туннель. При этом можно не буспокоиться о безопасности - подключиться к порту 2222/TCP можно будет произвести только через локальную петлю. Если необходимо будет расширить возможности подключения, например, всей сетью `10.1.10.0`, то в описании траверсы надо будет добавить слева эту сеть: `10.1.10.0:2222:localhost:22`.
+
+После этого на удаленной станции я поднимаю туннель в сторону сервера:
+```bash
+ssh admin@localhost -p 2222
+```
+
+и получаю приглашение уже серверной системы:
+```bash
+Last login: Sat Oct 24 10:34:51 2026 from 10.1.100.201
+
+window@srvoobservice01:~$
+```
+
+Перед установкой обновляем индексы пакетов:
+```bash
+sudo apt update && sudo apt upgrade -y
+```
+
+Устанавливаем необходимые пакеты:
+```bash
+sudo apt install isc-dhcp-server nginx -y
+```
+
+Для работы с современными коллекциями Arista (AVD) рекомендуется устанавливать Ansible через `pip3`, чтобы получить актуальную версию:
+```bash
+sudo apt install python3-pip python3-venv git -y
+```
+
+Создаем виртуальное окружение (создается в текущей директории) и активируем его:
+```bash
+python3 -m venv ansible-venv
+source ansible-venv/bin/activate
+```
+
+Установка Ansible и модуля Arista eapi:
+```bash
+pip install --upgrade pip
+pip install ansible paramiko jsonrpclib cvprac
+```
+
+Далее, настраиваем DHCP-сервер.
+<details>
+
+  <summary>Конфигурация ISC-DHCP: `/`</summary>
+
+```
+
+option domain-name "OoB.local";
+option domain-name-servers 10.1.100.254;
+
+default-lease-time 60;
+max-lease-time 120;
+
+subnet 10.1.100.0 netmask 255.255.255.0 {
+    option routers 10.1.100.254;
+
+    pool {
+        range 10.1.100.230 10.1.100.249;
+
+        if substring(option vendor-class-identifier, 0, 6) = "Arista" {
+            option bootfile-name "http://10.1.100.254/arista_ztp.py";
+        }
+        elsif substring(option vendor-class-identifier, 0, 5) = "Cisco" {
+            default-lease-time 3600;
+            max-lease-time 3600;
+            option tftp-server-name "10.1.100.250";
+            option bootfile-name "http://10.1.100.254/cisco_poap.py";
+        }
+    }
+}
+
+```
+  
+</details>
+
+В пуле находится условный оператор, с помощью которого DHCP-сервер анализирует опцию `Option 60` (Vendor Class Identifier) — специальное текстовое поле внутри DHCP-запроса, которое формирует сам коммутатор (Arista EOS или Cisco NX-OS). Т.о., сервер выдаст IP и, при выполнении соответствующих условий, опцию `bootfile-name`, содержащую скрипт для начальной костройки.
+
+Перезагрузим сервис
+```bash
+sudo systemctl start isc-dhcp-server
+```
+
+после чего будем отслеживать выдачу аресов:
+```bash
+tail -f /var/lib/dhcp/dhcpd.leases
+```
+
+При старте Arista vEOS получит lease: 
+```dhcp
+lease 10.1.100.230 {
+  starts 6 2026/10/24 17:17:33;
+  ends 6 2026/10/24 17:19:33;
+  cltt 6 2026/10/24 17:17:33;
+  binding state active;
+  next binding state free;
+  rewind binding state free;
+  hardware ethernet 50:00:00:0b:00:00;
+  uid "P\000\000\210\376'";
+  set vendor-class-identifier = "Arista;vEOS-lab;22FBC5A0A46BC11265CB88612F7B95E0";
+}
+```
+
+при этом в консоль самого коммутатора мы получим следующие сообщения:
+```log
+localhost login: Oct 24 17:17:31 localhost ZeroTouch: %ZTP-6-DHCPv4_QUERY: Sending DHCPv4 request with system MAC address on [ Ethernet1, Ethernet2, Ethernet3, Ethernet4, Ethernet5, Ethernet6, Ethernet7, Ethernet8, Management1 ] (option 67, 143)
+Oct 24 17:17:33 localhost ZeroTouch: %ZTP-6-DHCPv4_SUCCESS: DHCPv4 response received on Management1  [ Ip Address: 10.1.100.230/24; Nameserver: 10.1.100.254; Domain: OoB.local; Gateway: 10.1.100.254; Boot File: http://10.1.100.254/arista_ztp.py ] (option 67, 143)
+Oct 24 17:17:38 localhost ZeroTouch: %ZTP-6-CONFIG_DOWNLOAD: Attempting to download the startup-config from http://10.1.100.254/arista_ztp.py
+Oct 24 17:17:38 localhost ZeroTouch: %ZTP-4-CONFIG_DOWNLOAD_FAIL: Failed to download the startup-config from http://10.1.100.254/arista_ztp.py. Error: HTTP response code said error
+```
+
+Теперь проверим на коммутаторе Cisco. Я использую образ Nexus 9000v, который требует дополнительных опций (но при этом самостоятельно перебирает все интерфейсы):
+1. `default-lease-time 3600`, `max-lease-time 3600;` - В отличие от Arista, инженеры Cisco заложили в логику POAP жесткое ограничение: коммутатор считает DHCP-предложение невалидным и отклоняет его, если время аренды (Lease Time) адреса составляет меньше 1 часа (3600 секунд). Cisco боится, что адрес «протухнет» прямо во время скачивания тяжелого образа ОС или длинного скрипта.
+2. `option tftp-server-name` (Option 66) - IP-адрес или имя сервера, где лежит скрипт даже если передача будет производиться по HTTP.
 
 
+Журнал DHCP-сервера получит следующую запись:
+```dhcp
+lease 10.1.100.231 {
+  starts 6 2026/10/24 18:14:41;
+  ends 6 2026/10/24 18:16:41;
+  cltt 6 2026/10/24 18:14:41;
+  binding state active;
+  next binding state free;
+  rewind binding state free;
+  hardware ethernet 50:0c:00:00:1b:08;
+  uid "\0009BHGJ71I5TT";
+  set vendor-class-identifier = "Cisco N9K-C9500v";
+}
+```
 
+а консоль коммутатора выведет следующие диагностические сообщения.
+```log
+2026 Oct 24 18:26:30 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: Recieved DHCP offer from server ip  - 10.1.100.250
+2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Using DHCP, valid information received over Eth1/7 from 10.1.100.250
+2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Assigned IP address: 10.1.100.231
+2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Netmask: 255.255.255.0
+2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - DNS Server: 10.1.100.254
+2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Default Gateway: 10.1.100.254
+2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script Server: 10.1.100.250
+2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script Name: http://10.1.100.254/cisco_poap.py
+2026 Oct 24 18:26:49 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - The POAP Script download has started
+2026 Oct 24 18:26:49 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - The POAP Script is being downloaded from [copy tftp://10.1.100.250/http://10.1.100.254/cisco_poap.py bootflash:scripts/script.sh vrf default ]
+2026 Oct 24 18:27:15 switch %$ VDC-1 %$ %POAP-2-POAP_FAILURE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP boot file download failed.
+2026 Oct 24 18:27:18 switch %$ VDC-1 %$ %POAP-2-POAP_FAILURE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP DHCP discover phase failed
+```
 
-
-{width=30% .center}
+Теперь необходимо "поднять" инфраструктуру выдачи скрипта первичной настройки.
