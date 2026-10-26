@@ -992,12 +992,167 @@ Oct 24 17:17:38 localhost ZeroTouch: %ZTP-6-CONFIG_DOWNLOAD: Attempting to downl
 Oct 24 17:17:38 localhost ZeroTouch: %ZTP-4-CONFIG_DOWNLOAD_FAIL: Failed to download the startup-config from http://10.1.100.250/arista_ztp.py. Error: HTTP response code said error
 ```
 
-Теперь проверим на коммутаторе Cisco. Я использую образ Nexus 9000v, который требует дополнительных опций (но при этом самостоятельно перебирает все интерфейсы):
+Теперь необходимо "поднять" инфраструктуру выдачи скрипта первичной настройки - Nginx.
+
+Для того чтобы коммутаторы могли успешно скачать скрипт первоначальной настройки, Nginx должен отдавать этот файл как обычный статический текст по протоколу HTTP.
+
+В случае с Cisco есть важный нюанс: NX-OS бывает очень чувствителен к MIME-типам, которые возвращает веб-сервер. Если Nginx отдаст файл с типом `application/x-python`, коммутатор может его отклонить. Безопаснее всего настроить Nginx так, чтобы для директории загрузочных скриптов файлы отдавались как простой текст `text/plain`.
+
+Создадим отдельный конфигурационный файл для нашего веб-сайта автоматизации:
+```bash
+sudo nano /etc/nginx/sites-available/startup
+```
+
+<details>
+
+  <summary>Конфигурация Nginx: `/etc/nginx/sites-available/startup`</summary>
+
+
+```config
+server {
+    listen 80;
+    server_name 10.1.100.250;
+
+    root /var/www/html;
+    index index.html;
+
+    # Логирование запросов                                     
+    access_log /var/log/nginx/startup_access.log;
+    error_log /var/log/nginx/startup_error.log;
+
+    # Специальный блок для папки со скриптами
+    location /startup/ {
+        alias /var/www/html/startup/;
+
+        # Принудительно отдаем скрипты как plain text, чтобы Cisco и Arista не >
+        default_type text/plain;
+
+        # Разрешаем просмотр списка файлов в браузере (удобно для проверки)
+        autoindex on;
+    }
+}
+```
+
+</details>
+
+Активируем созданный сайт, предварительно удалив дефолтный конфиг Nginx (чтобы он не перехватывал запросы), с помощью символьной ссылки:
+```bash
+sudo rm /etc/nginx/sites-enabled/default
+sudo ln -s /etc/nginx/sites-available/startup /etc/nginx/sites-enabled/
+```
+
+произведем тестирование конфигурации
+```bash
+(ansible-venv) admin@srvoobservice01:~$ sudo nginx -t
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+```
+
+рестартанем Nginx:
+```bash
+sudo systemctl restart nginx
+```
+
+и создадим каталог стартовых скриптов:
+```bash
+sudo mkdir -p /var/www/html/startup/
+sudo chown -R www-data:www-data /var/www/html/startup
+sudo chmod 755 /var/www/html/startup
+```
+
+Для проверки работоспособности HTTP-сервера я создам текстовый файл:
+```bash
+sudo cat << EOF > /var/www/html/startup/test.txt
+Test Ok!
+EOF
+```
+
+Поправим режим доступа:
+```bash
+sudo chmod 644 /var/www/html/startup/test.txt
+```
+
+и проверим работоспособность HTTP-сервера:
+```bash
+admin@srvoobservice01:~$ curl -I http://10.1.100.250/startup/test.txt
+HTTP/1.1 200 OK
+Server: nginx/1.28.3 (Ubuntu)
+Date: Sat, 24 Oct 2026 19:35:39 GMT
+Content-Type: text/plain
+Content-Length: 9
+Last-Modified: Sat, 24 Oct 2026 19:28:31 GMT
+Connection: keep-alive
+ETag: "6add06df-9"
+Accept-Ranges: bytes
+```
+
+Перенесем дальнейшую работу с коммутаторами Arista в соответствующий раздел.
+
+Проверим дальнейшую работ на коммутаторе Cisco. Я использую образ Nexus 9000v, который требует дополнительных опций (но при этом самостоятельно перебирает все интерфейсы):
 1. `default-lease-time 3600`, `max-lease-time 3600;` - В отличие от Arista, инженеры Cisco заложили в логику POAP жесткое ограничение: коммутатор считает DHCP-предложение невалидным и отклоняет его, если время аренды (Lease Time) адреса составляет меньше 1 часа (3600 секунд). Cisco боится, что адрес «протухнет» прямо во время скачивания тяжелого образа ОС или длинного скрипта.
-2. `option tftp-server-name` (Option 66) - IP-адрес или имя сервера, где лежит скрипт даже если передача будет производиться по HTTP.
+2. `option tftp-server-name` (Option 66) - IP-адрес или имя сервера TFTP, где лежит скрипт (моя версия NX-OS поддерживает загрузку только через TFTP).
 
+Установим пакет `tftpd-hpa`:
+```bash
+sudo apt install tftpd-hpa
+```
 
-Журнал DHCP-сервера получит следующую запись:
+<details>
+
+  <summary>Конфигурация TFTP-сервера: `/etc/default/tftpd-hpa`</summary>
+
+```
+# /etc/default/tftpd-hpa
+
+TFTP_USERNAME="tftp"
+TFTP_DIRECTORY="/var/www/html/startup"
+TFTP_ADDRESS=":69"
+TFTP_OPTIONS="--secure"
+
+```
+
+</details>
+
+Перезапускаем сервис после настроек:
+```bash
+sudo systemctl restart tftpd-hpa.service
+```
+
+Я проверь работоспособность с помоью простенького скрипта:
+
+<details>
+
+  <summary>Проверочный скрипт первоначальной загрузки Cisco Nexus: `/var/www/html/startup/poap_script.py`</summary>
+
+```python
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import sys
+# Импортируем проприетарный модуль Cisco NX-OS для работы с CLI
+from cli import cli
+
+def main():
+    # Отправляем сообщение "It's OK" в syslog коммутатора
+    # Оно отобразится прямо в консоли с тегом POAP-SCRIPT
+    cli("send log message POAP-SCRIPT: It's OK")
+
+    # Сигнализируем встроенному менеджеру POAP, что скрипт отработал успешно.
+    # Статус 0 сообщает NX-OS, что фаза скрипта завершена без ошибок.
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main()
+```
+
+</details>
+
+Перед проверкой необходимо указать правильный режим файла:
+```bash
+sudo chmod 644 /var/www/html/startup/cisco_poap.py
+```
+
+После чего включаем еще один коммутатор swOoOAccessXX. Журнал DHCP-сервера получит следующую запись:
 ```dhcp
 lease 10.1.100.231 {
   starts 6 2026/10/24 18:14:41;
@@ -1012,7 +1167,62 @@ lease 10.1.100.231 {
 }
 ```
 
-а консоль коммутатора выведет следующие диагностические сообщения.
+а консоль коммутатора выведет диагностические сообщения о запуске сервиса POAP:
+```log
+Waiting for system online status before starting POAP ...
+2026 Oct 26 07:49:16 switch %$ VDC-1 %$ %ASCII-CFG-2-CONF_CONTROL: System ready
+Enabling LLDP
+Starting Auto Provisioning ...
+2026 Oct 26 07:49:36 switch %$ VDC-1 %$ %POAP-2-POAP_INITED: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP process initialized
+2026 Oct 26 07:49:44 switch %$ VDC-1 %$ %PNP-2-PNP_INFO: PnP Ignited
+```
+
+Далее, коммутатор начинает последовательно перебирать порты, включая их и пытаясь получить IP-адрес динамически, начиная с `MGMT` и, далее, по всем существующим портам:
+```log
+Abort Power On Auto Provisioning [yes - continue with normal setup, no - continue with Power On Auto Provisioning] (yes/no)[no]: 2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - USB Initializing Success
+2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - USB disk not detected
+2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - USB disk not detected (message repeated 1 time)
+2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Start DHCP v4 session
+2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_DHCP_DISCOVER_START: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP DHCP Discover phase started
+2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_INFO:   - Abort Power On Auto Provisioning [yes - continue with normal setup, no - continue with Power On Auto Provisioning] (yes/no)[no]:
+2026 Oct 26 07:50:30 switch %$ VDC-1 %$ %POAP-2-POAP_FAILURE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP DHCP discover phase failed
+```
+
+И так, пока не дойдет до того, который подключен к существующей инфраструктуре (eth1/7):
+```log
+2026 Oct 26 07:52:00 switch %$ VDC-1 %$ %POAP-2-POAP_DHCP_DISCOVER_START: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP DHCP Discover phase started
+2026 Oct 26 07:52:00 switch %$ VDC-1 %$ %POAP-2-POAP_INFO:   - Abort Power On Auto Provisioning [yes - continue with normal setup, no - continue with Power On Auto Provisioning] (yes/no)[no]:
+2026 Oct 26 07:52:02 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: Recieved DHCP offer from server ip  - 10.1.100.250
+2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: Recieved DHCP offer from server ip  - 10.1.100.250 (message repeated 1 time)
+2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Using DHCP, valid information received over Eth1/7 from 10.1.100.250
+2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Assigned IP address: 10.1.100.231
+2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Netmask: 255.255.255.0
+2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - DNS Server: 10.1.100.254
+2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Default Gateway: 10.1.100.254
+2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script Server: 10.1.100.250
+2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script Name: cisco_poap.py
+2026 Oct 26 07:52:27 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - The POAP Script download has started
+2026 Oct 26 07:52:27 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - The POAP Script is being downloaded from [copy tftp://10.1.100.250/cisco_poap.py bootflash:scripts/script.sh vrf default ]
+2026 Oct 26 07:52:31 switch %$ VDC-1 %$ %POAP-2-POAP_SCRIPT_DOWNLOADED: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Successfully downloaded POAP script file
+2026 Oct 26 07:52:31 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script file size 1128, MD5 checksum b2e01c60f141d9a5fe6f444e05f93399
+2026 Oct 26 07:52:31 switch %$ VDC-1 %$ %POAP-2-POAP_SCRIPT_STARTED_MD5_NOT_VALIDATED: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP script execution started(MD5 not validated)
+
+[POAP BACKGROUND]: It's OK
+2026 Oct 26 07:52:41 switch %$ VDC-1 %$ %POAP-2-POAP_SCRIPT_EXEC_SUCCESS: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP script execution success
+2026 Oct 26 07:52:43 switch %$ VDC-1 %$ %POAP-2-POAP_RELOAD_DEVICE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Reload device
+```
+
+Как видно, простейший скрипт сработал, поэтому можно переходить к рабочему скрипту первоначальной настройки.
+
+
+
+
+
+
+
+
+
+
 ```log
 2026 Oct 24 18:26:30 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: Recieved DHCP offer from server ip  - 10.1.100.250
 2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Using DHCP, valid information received over Eth1/7 from 10.1.100.250
@@ -1028,82 +1238,7 @@ lease 10.1.100.231 {
 2026 Oct 24 18:27:18 switch %$ VDC-1 %$ %POAP-2-POAP_FAILURE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP DHCP discover phase failed
 ```
 
-Теперь необходимо "поднять" инфраструктуру выдачи скрипта первичной настройки - Nginx.
 
-Для того чтобы Cisco Nexus мог успешно скачать скрипт `cisco_poap.py`, Nginx должен отдавать этот файл как обычный статический текст по протоколу HTTP.
-
-В случае с Cisco есть важный нюанс: NX-OS бывает очень чувствителен к MIME-типам, которые возвращает веб-сервер. Если Nginx отдаст файл с типом `application/x-python`, коммутатор может его отклонить. Безопаснее всего настроить Nginx так, чтобы для директории загрузочных скриптов файлы отдавались как простой текст `text/plain`.
-
-Создадим отдельный конфигурационный файл для нашего веб-сайта автоматизации:
-```bash
-sudo nano /etc/nginx/sites-available/startup
-```
-
-```config
-server {
-    listen 80;
-    server_name 10.1.100.250;
-
-    root /var/www/html;
-    index index.html;
-
-    # Логирование запросов                                     
-    access_log /var/log/nginx/ztp_access.log;
-    error_log /var/log/nginx/ztp_error.log;
-
-    # Специальный блок для папки со скриптами
-    location /startup/ {
-        alias /var/www/html/startup/;
-
-        # Принудительно отдаем скрипты как plain text, чтобы Cisco и Arista не >
-        default_type text/plain;
-
-        # Разрешаем просмотр списка файлов в браузере (удобно для проверки)
-        autoindex on;
-    }
-}
-```
-
-Активируем созданный сайт, предварительно удалив дефолтный конфиг Nginx (чтобы он не перехватывал запросы), с помощью символьной ссылки:
-```bash
-sudo rm /etc/nginx/sites-enabled/default
-sudo ln -s /etc/nginx/sites-available/startup /etc/nginx/sites-enabled/
-```
-
-
-
-```bash
-(ansible-venv) admin@srvoobservice01:~$ sudo nginx -t
-nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
-nginx: configuration file /etc/nginx/nginx.conf test is successful
-```
-
-
-sudo systemctl restart nginx
-
-sudo mkdir -p /var/www/html/startup/
-
-sudo chown -R www-data:www-data /var/www/html/startup
-sudo chmod 755 /var/www/html/startup
-
-
-sudo nano /var/www/html/startup/test.txt
-
-Test Ok!
-
-sudo chmod 644 /var/www/html/startup/test.txt
-
-
-(ansible-venv) window@srvoobservice01:~$ curl -I http://10.1.100.250/startup/test.txt
-HTTP/1.1 200 OK
-Server: nginx/1.28.3 (Ubuntu)
-Date: Sat, 24 Oct 2026 19:35:39 GMT
-Content-Type: text/plain
-Content-Length: 9
-Last-Modified: Sat, 24 Oct 2026 19:28:31 GMT
-Connection: keep-alive
-ETag: "6add06df-9"
-Accept-Ranges: bytes
 
 sudo ln -s /var/www/html/startup/test.txt /var/www/html/startup/cisco_poap.py
 
@@ -1131,21 +1266,6 @@ option bootfile-name "startup/poap_script.py";
 
 ---
 
-sudo apt install tftpd-hpa
-
-sudo nano /etc/default/tftpd-hpa
-
-
-
-# /etc/default/tftpd-hpa
-
-TFTP_USERNAME="tftp"
-TFTP_DIRECTORY="/var/www/html/startup"
-TFTP_ADDRESS=":69"
-TFTP_OPTIONS="--secure"
-
-sudo systemctl restart tftpd-hpa.service
-
 
 2026 Oct 24 20:04:31 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: Recieved DHCP offer from server ip  - 10.1.100.250
 2026 Oct 24 20:04:37 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Using DHCP, valid information received over Eth1/7 from 10.1.100.250
@@ -1161,71 +1281,5 @@ sudo systemctl restart tftpd-hpa.service
 2026 Oct 24 20:04:57 switch %$ VDC-1 %$ %POAP-2-POAP_FAILURE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP DHCP discover phase failed
 
 ```
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
-import sys
-# Импортируем проприетарный модуль Cisco NX-OS для работы с CLI
-from cli import cli
-
-def main():
-    # Отправляем сообщение "It's OK" в syslog коммутатора
-    # Оно отобразится прямо в консоли с тегом POAP-SCRIPT
-    cli("send log message POAP-SCRIPT: It's OK")
-
-    # Сигнализируем встроенному менеджеру POAP, что скрипт отработал успешно.
-    # Статус 0 сообщает NX-OS, что фаза скрипта завершена без ошибок.
-    sys.exit(0)
-
-if __name__ == "__main__":
-    main()
-```
-
-sudo chmod 644 /var/www/html/startup/cisco_poap.py
-
-
-```
-Waiting for system online status before starting POAP ...
-2026 Oct 26 07:49:16 switch %$ VDC-1 %$ %ASCII-CFG-2-CONF_CONTROL: System ready
-Enabling LLDP
-Starting Auto Provisioning ...
-2026 Oct 26 07:49:36 switch %$ VDC-1 %$ %POAP-2-POAP_INITED: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP process initialized
-2026 Oct 26 07:49:44 switch %$ VDC-1 %$ %PNP-2-PNP_INFO: PnP Ignited
-```
-
-потом он начинает перебирать порты
-
-```
-Abort Power On Auto Provisioning [yes - continue with normal setup, no - continue with Power On Auto Provisioning] (yes/no)[no]: 2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - USB Initializing Success
-2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - USB disk not detected
-2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - USB disk not detected (message repeated 1 time)
-2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Start DHCP v4 session
-2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_DHCP_DISCOVER_START: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP DHCP Discover phase started
-2026 Oct 26 07:50:23 switch %$ VDC-1 %$ %POAP-2-POAP_INFO:   - Abort Power On Auto Provisioning [yes - continue with normal setup, no - continue with Power On Auto Provisioning] (yes/no)[no]:
-2026 Oct 26 07:50:30 switch %$ VDC-1 %$ %POAP-2-POAP_FAILURE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP DHCP discover phase failed
-```
-
-и когда доходит до нашего:
-
-```
-2026 Oct 26 07:52:00 switch %$ VDC-1 %$ %POAP-2-POAP_DHCP_DISCOVER_START: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP DHCP Discover phase started
-2026 Oct 26 07:52:00 switch %$ VDC-1 %$ %POAP-2-POAP_INFO:   - Abort Power On Auto Provisioning [yes - continue with normal setup, no - continue with Power On Auto Provisioning] (yes/no)[no]:
-2026 Oct 26 07:52:02 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: Recieved DHCP offer from server ip  - 10.1.100.250
-2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: Recieved DHCP offer from server ip  - 10.1.100.250 (message repeated 1 time)
-2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Using DHCP, valid information received over Eth1/7 from 10.1.100.250
-2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Assigned IP address: 10.1.100.231
-2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Netmask: 255.255.255.0
-2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - DNS Server: 10.1.100.254
-2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Default Gateway: 10.1.100.254
-2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script Server: 10.1.100.250
-2026 Oct 26 07:52:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script Name: cisco_poap.py
-2026 Oct 26 07:52:27 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - The POAP Script download has started
-2026 Oct 26 07:52:27 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - The POAP Script is being downloaded from [copy tftp://10.1.100.250/cisco_poap.py bootflash:scripts/script.sh vrf default ]
-2026 Oct 26 07:52:31 switch %$ VDC-1 %$ %POAP-2-POAP_SCRIPT_DOWNLOADED: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Successfully downloaded POAP script file
-2026 Oct 26 07:52:31 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script file size 1128, MD5 checksum b2e01c60f141d9a5fe6f444e05f93399
-2026 Oct 26 07:52:31 switch %$ VDC-1 %$ %POAP-2-POAP_SCRIPT_STARTED_MD5_NOT_VALIDATED: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP script execution started(MD5 not validated)
-
-[POAP BACKGROUND]: It's OK
-2026 Oct 26 07:52:41 switch %$ VDC-1 %$ %POAP-2-POAP_SCRIPT_EXEC_SUCCESS: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP script execution success
-2026 Oct 26 07:52:43 switch %$ VDC-1 %$ %POAP-2-POAP_RELOAD_DEVICE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Reload device
 ```
