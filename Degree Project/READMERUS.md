@@ -1088,7 +1088,7 @@ Accept-Ranges: bytes
 
 Перенесем дальнейшую работу с коммутаторами Arista в соответствующий раздел.
 
-Проверим дальнейшую работ на коммутаторе Cisco. Я использую образ Nexus 9000v, который требует дополнительных опций (но при этом самостоятельно перебирает все интерфейсы):
+Проверим дальнейшую работу на коммутаторе Cisco. Я использую образ Nexus 9000v, который требует дополнительных опций:
 1. `default-lease-time 3600`, `max-lease-time 3600;` - В отличие от Arista, инженеры Cisco заложили в логику POAP жесткое ограничение: коммутатор считает DHCP-предложение невалидным и отклоняет его, если время аренды (Lease Time) адреса составляет меньше 1 часа (3600 секунд). Cisco боится, что адрес «протухнет» прямо во время скачивания тяжелого образа ОС или длинного скрипта.
 2. `option tftp-server-name` (Option 66) - IP-адрес или имя сервера TFTP, где лежит скрипт (моя версия NX-OS поддерживает загрузку только через TFTP).
 
@@ -1118,7 +1118,7 @@ TFTP_OPTIONS="--secure"
 sudo systemctl restart tftpd-hpa.service
 ```
 
-Я проверь работоспособность с помоью простенького скрипта:
+Я проверь работоспособность с помощью простенького скрипта:
 
 <details>
 
@@ -1126,19 +1126,14 @@ sudo systemctl restart tftpd-hpa.service
 
 ```python
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import sys
-# Импортируем проприетарный модуль Cisco NX-OS для работы с CLI
+
 from cli import cli
 
 def main():
-    # Отправляем сообщение "It's OK" в syslog коммутатора
-    # Оно отобразится прямо в консоли с тегом POAP-SCRIPT
     cli("send log message POAP-SCRIPT: It's OK")
 
-    # Сигнализируем встроенному менеджеру POAP, что скрипт отработал успешно.
-    # Статус 0 сообщает NX-OS, что фаза скрипта завершена без ошибок.
     sys.exit(0)
 
 if __name__ == "__main__":
@@ -1147,7 +1142,7 @@ if __name__ == "__main__":
 
 </details>
 
-Перед проверкой необходимо указать правильный режим файла:
+Перед проверкой необходимо указать правильный режим доступа к файлу:
 ```bash
 sudo chmod 644 /var/www/html/startup/cisco_poap.py
 ```
@@ -1212,74 +1207,882 @@ Abort Power On Auto Provisioning [yes - continue with normal setup, no - continu
 2026 Oct 26 07:52:43 switch %$ VDC-1 %$ %POAP-2-POAP_RELOAD_DEVICE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Reload device
 ```
 
-Как видно, простейший скрипт сработал, поэтому можно переходить к рабочему скрипту первоначальной настройки.
+Как видно, простейший скрипт сработал, поэтому можно переходить к рабочему скрипту первоначальной настройки. Можно воспользоваться [скриптом](https://github.com/datacenter/nexus9000/blob/master/nx-os/poap/poap.py), на который ссылается официальная документация Cisco. Он считается «золотым стандартом» и содержит всю необходимую логику для загрузки образа, конфигурации и проверки целостности.
+
+Опираясь на схему сети управления, в рабочем скрипте необходимо произвести следующие действия:
+1. Создать пользователя `ansible_config` с правами 15 уровня для сервиса Ansible.
+2. Включить `cdp` и `lldp` для возможности получения информации о соединениях на L2.
+3. Выждав 1 минуту прочитать окружение `cdp` и `lldp` и выбрать интерфейс, на котором находится коммутатор ядра (swOoBCCore01).
+4. Создать VLAN управления (`VLAN100`).
+5. Перевести этот интерфейс в режим транка с VLAN по-умолчанию `100`.
+6. Произвести остальные действия, подготовливающие для дальнейших действий по "раскатке" настроек с использованием `Ansible`.
+7. Отключить `POAP` и перезагрузить систему.
+
+Мой скрипт пока имеет некоторые проблемы, которые, я думаю, решу в будущем.
+
+<details>
+
+  <summary>Скрипт первоначальной загрузки Cisco Nexus: `/var/www/html/startup/poap_script.py`</summary>
+
+```python
+
+#!/usr/bin/env python
+
+import os
+import sys
+import re
+import json
+
+try:
+    from cli import *
+except ImportError:
+    from cisco import *
+
+def log(message):
+    try:
+        with open("/dev/console", "w") as con:
+            con.write("\n[POAP-LOG]: {}\n".format(message))
+    except IOError:
+        print("[POAP-LOG]: {}".format(message))
+
+    os.system("logger -p local7.info -t POAP '{}'".format(message))
 
 
+def get_boot_image(cli_func):
+    try:
+        sh_ver = cli_func("show version")
+        if not sh_ver:
+            return "None (Empty sh ver response)"
+        
+        match = re.search(r'(\S*image file is:\s*\S+)', sh_ver, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        
+        for line in sh_ver.splitlines():
+            if "image file is" in line.lower():
+                return line.strip()
+                
+        return "None (Boot image string not found in sh ver)"
+    except Exception as e:
+        return "None (Error parsing sh ver: {})".format(str(e))
 
+def discover_core_interface(cli_func):
+    log("Waiting for LLDP looking for neighbors...")
 
+    try:
+        log("LLDP: Get neighbors...")
+        lldp_raw = cli_func("show lldp neighbors detail | json")
+        
+        if lldp_raw.strip():
+            lldp_data = json.loads(lldp_raw)
+            neigh_list = lldp_data.get("TABLE_nbor_detail", {}).get("ROW_nbor_detail", [])
+            
+            if isinstance(neigh_list, dict): 
+                neigh_list = [neigh_list]
+                
+            for nbor in neigh_list:
+                chassis_id = str(nbor.get("chassis_id", ""))
+                sys_name = str(nbor.get("sys_name", ""))
+                if "swOoBCCore" in chassis_id or "swOoBCCore" in sys_name:
+                    local_intf = nbor.get("l_port_id")
+                    if local_intf:
+                        log("SUCCESS! Core switch found via LLDP on port: %s" % local_intf)
+                        return local_intf
+    except Exception as e:
+        log("Warning during LLDP execution/parsing: %s" % str(e))
 
+    return None
 
+def get_last_ethernet_port():
+    try:
+        raw_output = cli("show interface status")
+        eth_ports = re.findall(r'(Eth\d+(?:/\d+){1,2})', raw_output)
+        if not eth_ports:
+            raise Exception("No ethernet ports found")
+        full_ports = ["Ethernet{}".format(p[3:]) if p.lower().startswith("eth") else p for p in eth_ports]
+        def port_key(name):
+            return [int(s) for s in re.findall(r'\d+', name)]
+        full_ports.sort(key=port_key)
+        return full_ports[-1]
+    except Exception as e:
+        log("Error determining last port: {}. Defaulting to Eth1/48".format(str(e)))
+        return "Ethernet1/48"
 
+def main():
+    log("Starting safe configuration merge...")
 
+    boot_image = get_boot_image(cli).split()[-1]
+    log("BOOT IMAGE FOUND: {}".format(boot_image))
 
+    log("Forcing boot image configuration for: {}".format(boot_image))
+    try:
+        if not boot_image.startswith("bootflash:"):
+            boot_path = "bootflash:/{}".format(boot_image)
+        else:
+            boot_path = boot_image#
 
-```log
-2026 Oct 24 18:26:30 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: Recieved DHCP offer from server ip  - 10.1.100.250
-2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Using DHCP, valid information received over Eth1/7 from 10.1.100.250
-2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Assigned IP address: 10.1.100.231
-2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Netmask: 255.255.255.0
-2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - DNS Server: 10.1.100.254
-2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Default Gateway: 10.1.100.254
-2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script Server: 10.1.100.250
-2026 Oct 24 18:26:36 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script Name: http://10.1.100.250/cisco_poap.py
-2026 Oct 24 18:26:49 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - The POAP Script download has started
-2026 Oct 24 18:26:49 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - The POAP Script is being downloaded from [copy tftp://10.1.100.250/http://10.1.100.250/cisco_poap.py bootflash:scripts/script.sh vrf default ]
-2026 Oct 24 18:27:15 switch %$ VDC-1 %$ %POAP-2-POAP_FAILURE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP boot file download failed.
-2026 Oct 24 18:27:18 switch %$ VDC-1 %$ %POAP-2-POAP_FAILURE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP DHCP discover phase failed
+        cmd = "configure terminal ; boot nxos {}".format(boot_path)
+        log("Executing CLI bypass: {}".format(cmd))
+        cli(cmd)
+        log("Boot image successfully set via CLI.")
+    except Exception as e:
+        log("Warning: Failed to set boot image via CLI: {}".format(str(e)))
+
+    trunk_port = discover_core_interface(cli)
+    if not trunk_port:
+        log("Core switch not detected via CDP/LLDP. Using fallback port sorting...")
+        trunk_port = get_last_ethernet_port()
+        
+    log("Selected trunk port for Ansible link: {}".format(trunk_port))
+
+    password = "P@$$w0rd"
+
+    config_text = """!
+terminal dont-ask
+boot nxos {}
+system no poap
+feature lldp
+feature interface-vlan
+vlan 100
+  name NetMGMT
+feature ssh
+feature scp-server
+feature nxapi
+nxapi http port 80
+nxapi https port 443
+username ansible password {} role network-admin
+interface vlan100
+  ip address dhcp
+  no shutdown
+interface {}
+  switchport
+  switchport mode trunk
+  switchport trunk native vlan 100
+  no shutdown
+""".format(boot_image, password, trunk_port)
+
+    temp_path = "/volatile/poap.cfg"
+
+    try:
+        with open(temp_path, "w") as f:
+            f.write(config_text)
+        log("Config file written to volatile.")
+    except Exception as e:
+        sys.exit(1)
+
+    try:
+        cli("copy volatile:poap.cfg running-config")
+        log("Running-config updated successfully.")
+    except Exception as e:
+        pass
+
+    log("Applying configuration via Cisco Scheduled-Config method...")
+    try:
+        cli("copy volatile:poap.cfg scheduled-config")
+        log("Scheduled-config successfully staged.")
+    except Exception as e:
+        log("Scheduled-config failed: {}. Exiting.".format(str(e)))
+        sys.exit(1)
+
+    if os.path.exists(temp_path):
+        os.remove(temp_path)
+
+    log("POAP Success. Telling switch to apply and complete.")
+    
+    os.environ['poap_script_exit_status'] = '0'
+    sys.exit(0)
+
+if __name__ == "__main__":
+    main()
+
 ```
 
+</details>
 
+После того, как скрипт протестирован и считается полностью работающим (протестировать скрипт проще всего в командном режиме коммутатора, ипользуя `copy tftp://10.1.100.250/cisco_poap.py bootflash:scripts/script.sh vrf default` для загрузки и `python bootflash:scripts/script.sh` - для исполнения), необходимо пересчитать md5-хэш:
+```bash
+sed -i '/^#md5sum/d' cisco_poap.py
+md5sum cisco_poap.py | awk '{print $1}' > cisco_poap.py.md5
+echo "#md5sum=\"$(cat cisco_poap.py.md5)\"" >> cisco_poap.py
+```
 
-sudo ln -s /var/www/html/startup/test.txt /var/www/html/startup/cisco_poap.py
+Далее, необходимо завершить процесс автоматической настройки, доверив его Ansible. Я устанавливал Ansible из домашней папки пользователя `admin`. Создадим в ней файл инвентаризации `inventory.ini` сразу под все сети фабрики:
 
-(ansible-venv) window@srvoobservice01:~$ curl -I http://10.1.100.250/startup/cisco_poap.py
-HTTP/1.1 200 OK
-Server: nginx/1.28.3 (Ubuntu)
-Date: Sat, 24 Oct 2026 19:38:47 GMT
-Content-Type: text/plain
-Content-Length: 9
-Last-Modified: Sat, 24 Oct 2026 19:28:31 GMT
-Connection: keep-alive
-ETag: "6add06df-9"
-Accept-Ranges: bytes
+<details>
 
-(ansible-venv) window@srvoobservice01:~$ curl http://10.1.100.250/startup/cisco_poap.py
-Test Ok!
+  <summary>Файл инвентаризации: `~/inventory.ini`</summary>
 
-tail -f /var/log/nginx/ztp_access.log
+```ini
 
+[oob_network_cisco_nexus]
+10.1.100.1
+10.1.100.2
+10.1.100.201
 
+[backend_network]
 
+[frontend_network]
 
-option bootfile-name "startup/poap_script.py";
+[oob_network_cisco_nexus:vars]
+ansible_connection=ssh
+ansible_network_os=default
+ansible_user=ansible
+ansible_password=P@$$w0rd
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+```
 
+</details>
+
+Так как на установленных вручную коммутаторах пользователь ansible не был сконфигурирован, необходимо его добавить:
+```
+username ansible password P@$$w0rd role network-admin
+```
+
+Если сейчас производить работу через ansible, новый коммутатор, а точнее - его отсутствие будет генерировать ошибку:
+```
+(ansible-venv) admin@srvoobservice01:~$ ansible oob_network_cisco_nexus -i inventory.ini -m raw -a "show version"
+[ERROR]: Task failed: Failed to connect to the host via ssh: ssh: connect to host 10.1.100.2 port 22: No route to host
+Origin: <adhoc 'raw' task>
+
+{'action': 'raw', 'args': {'_raw_params': 'show version'}, 'timeout': 0, 'async_val': 0, 'poll': 15}
+
+10.1.100.2 | UNREACHABLE! => {
+    "changed": false,
+    "msg": "Task failed: Failed to connect to the host via ssh: ssh: connect to host 10.1.100.2 port 22: No route to host",
+    "unreachable": true
+}
+10.1.100.1 | CHANGED | rc=0 >>
+Cisco Nexus Operating System (NX-OS) Software
+TAC support: http://www.cisco.com/tac
+Documents: http://www.cisco.com/en/US/products/ps9372/tsd_products_support_series_home.html
+Copyright (c) 2002-2024, Cisco Systems, Inc. All rights reserved.
+The copyrights to certain works contained herein are owned by
+other third parties and are used and distributed under license.
+Some parts of this software are covered under the GNU Public
+License. A copy of the license is available at
+http://www.gnu.org/licenses/gpl.html.
+
+Nexus 9000v is a demo version of the Nexus Operating System
+
+Software
+  BIOS: version 
+  NXOS: version 10.5(2) [Feature Release]
+  BIOS compile time:  
+  NXOS image file is: bootflash:///nxos64-cs.10.5.2.F.bin
+  NXOS compile time:  11/30/2024 12:00:00 [11/26/2024 08:23:26]
+
+Hardware
+  cisco Nexus9000 C9500v Chassis ("Supervisor Module")
+  Intel(R) Core(TM) i7-3770K CPU @ 3.50GHz with 8135572 kB of memory.
+  Processor Board ID 9BN723DV4FZ
+  Device name: swOoBAccess01
+  bootflash:    8598528 kB
+
+Kernel uptime is 4 day(s), 22 hour(s), 5 minute(s), 1 second(s)
+
+Last reset 
+  Reason: Unknown
+  System version: 
+  Service: 
+
+plugin
+  Core Plugin, Ethernet Plugin
+
+Active Package(s):
+	
+Warning: Permanently added '10.1.100.1' (RSA) to the list of known hosts.
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+User Access Verification
+Shared connection to 10.1.100.1 closed.
+
+10.1.100.201 | CHANGED | rc=0 >>
+Cisco Nexus Operating System (NX-OS) Software
+TAC support: http://www.cisco.com/tac
+Documents: http://www.cisco.com/en/US/products/ps9372/tsd_products_support_series_home.html
+Copyright (c) 2002-2024, Cisco Systems, Inc. All rights reserved.
+The copyrights to certain works contained herein are owned by
+other third parties and are used and distributed under license.
+Some parts of this software are covered under the GNU Public
+License. A copy of the license is available at
+http://www.gnu.org/licenses/gpl.html.
+
+Nexus 9000v is a demo version of the Nexus Operating System
+
+Software
+  BIOS: version 
+  NXOS: version 10.5(2) [Feature Release]
+  BIOS compile time:  
+  NXOS image file is: bootflash:///nxos64-cs.10.5.2.F.bin
+  NXOS compile time:  11/30/2024 12:00:00 [11/26/2024 08:23:26]
+
+Hardware
+  cisco Nexus9000 C9500v Chassis ("Supervisor Module")
+  Intel(R) Core(TM) i7-3770K CPU @ 3.50GHz with 8135572 kB of memory.
+  Processor Board ID 9DVXFY3LZH3
+  Device name: swOoBCCore01
+  bootflash:    8598528 kB
+
+Kernel uptime is 4 day(s), 22 hour(s), 5 minute(s), 4 second(s)
+
+Last reset 
+  Reason: Unknown
+  System version: 
+  Service: 
+
+plugin
+  Core Plugin, Ethernet Plugin
+
+Active Package(s):
+	
+Warning: Permanently added '10.1.100.201' (RSA) to the list of known hosts.
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+User Access Verification
+Shared connection to 10.1.100.201 closed.
+```
+
+Как видно из вывода выше, остальные коммутаторы опрашиваются. 
+
+Так как мы не знаем адрес нового коммутатора, необходимо его узнать. Сделать это из консоли `swOoBCCore01` не получится, так как новый коммутатор не передает полученный SVI-интерфейсом адрес по DHCP через LLDP (настроить смену интерфейса управления на виртуальном коммутаторе также не имеет возможности). Остается вариант через пул DHCP-лиз (`cat /var/lib/dhcp/dhcpd.leases`):
+```
+lease 10.1.100.231 {
+  starts 3 2026/10/28 16:16:28;
+  ends 3 2026/10/28 17:16:28;
+  cltt 3 2026/10/28 16:16:28;
+  binding state active;
+  next binding state free;
+  rewind binding state free;
+  hardware ethernet 50:0c:00:00:1b:08;
+  uid "\000933O218YR9TVlan100";
+  set vendor-class-identifier = "Cisco N9K-C9500v";
+}
+```
+
+Проверяем связанность со стороны сервера автоматизации:
+```
+(ansible-venv) admin@srvoobservice01:~$ ping -c 3 10.1.100.231
+PING 10.1.100.231 (10.1.100.231) 56(84) bytes of data.
+64 bytes from 10.1.100.231: icmp_seq=1 ttl=255 time=14.2 ms
+64 bytes from 10.1.100.231: icmp_seq=2 ttl=255 time=10.4 ms
+64 bytes from 10.1.100.231: icmp_seq=3 ttl=255 time=10.6 ms
+
+--- 10.1.100.231 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2004ms
+rtt min/avg/max/mdev = 10.395/11.723/14.186/1.743 ms
+```
+
+После этого, можно проверить работоспособность ansible:
+```
+(ansible-venv) admin@srvoobservice01:~$ ansible all -i "10.1.100.231," -m raw -a "show version" -e "ansible_user=ansible ansible_password=P@$$w0rd ansible_connection=ssh ansible_network_os=default ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o WarnWeakCrypto=no'"
+10.1.100.231 | CHANGED | rc=0 >>
+Cisco Nexus Operating System (NX-OS) Software
+TAC support: http://www.cisco.com/tac
+Documents: http://www.cisco.com/en/US/products/ps9372/tsd_products_support_series_home.html
+Copyright (c) 2002-2024, Cisco Systems, Inc. All rights reserved.
+The copyrights to certain works contained herein are owned by
+other third parties and are used and distributed under license.
+Some parts of this software are covered under the GNU Public
+License. A copy of the license is available at
+http://www.gnu.org/licenses/gpl.html.
+
+Nexus 9000v is a demo version of the Nexus Operating System
+
+Software
+  BIOS: version 
+  NXOS: version 10.5(2) [Feature Release]
+  BIOS compile time:  
+  NXOS image file is: bootflash:///nxos64-cs.10.5.2.F.bin
+  NXOS compile time:  11/30/2024 12:00:00 [11/26/2024 08:23:26]
+
+Hardware
+  cisco Nexus9000 C9500v Chassis ("Supervisor Module")
+  Intel(R) Core(TM) i7-3770K CPU @ 3.50GHz with 8135576 kB of memory.
+  Processor Board ID 92GDURS4N65
+  Device name: switch
+  bootflash:    8598528 kB
+
+Kernel uptime is 0 day(s), 16 hour(s), 40 minute(s), 59 second(s)
+
+Last reset 
+  Reason: Unknown
+  System version: 
+  Service: 
+
+plugin
+  Core Plugin, Ethernet Plugin
+
+Active Package(s):
+	
+Shared connection to 10.1.100.231 closed.
+```
+
+Однако, работа в RAW-режиме весьма трудоемка и есть смысл перейти на специализированную коллекцию, соответствующую текущему оборудованию - Cisco Nexus и осуществлять взаимодействие через nxapi.
+
+Скачаем ее:
+```
+ansible-galaxy collection download cisco.nxos:13.0.0
+```
+
+> Автоматически, коллекция скачивается в каталог `./collections`, что может в дальнейшем создать проблемы во время установки.
+
+Скопируем файлы:
+```
+cp collections/* ./
+```
+
+и устанавливаем:
+```
+ansible-galaxy collection install -r requirements.yml --force
+```
+
+Поправим файл инвентаризации (`~/inventory.ini`) следующим образом:
+```
+[oob_network_cisco_nexus]
+10.1.100.1
+10.1.100.2
+10.1.100.201
+
+[backend_network]
+
+[frontend_network]
+
+[oob_network_cisco_nexus:vars]
+ansible_connection=httpapi
+ansible_network_os=cisco.nxos.nxos
+ansible_user=ansible
+ansible_password=P@$$w0rd
+ansible_httpapi_use_ssl=true
+ansible_httpapi_validate_certs=false
+ansible_httpapi_port=443
+```
+
+Следует отметить, что на всех коммутаторах необходимо сконфигурировать nxapi для последующей работы (на новом коммутаторе это сделано через POAP-скрипт):
+```
+feature nxapi
+nxapi https port 443
+```
+
+Создадим простенький плейбук (`check_facts.yml`) для проверки работоспособности через nxapi:
+
+<details>
+
+  <summary>Плейбук проверки связи: `~/check_facts.yml`</summary>
+
+```yaml
+---
+- name: Проверка связи с коммутаторами Nexus из inventory.ini через NX-API
+  hosts: oob_network_cisco_nexus
+  gather_facts: false
+  collections:
+    - cisco.nxos
+
+  tasks:
+    - name: Собираем факты через API
+      cisco.nxos.nxos_facts:
+      register: result
+
+    - name: Выводим результат
+      debug:
+        var: result
+```
+
+</details>
+
+Проверим работу (`ansible-playbook -i inventory.ini check_facts.yml`):
+```
+(ansible-venv) admin@srvoobservice01:~$ ansible-playbook -i inventory.ini check_facts.yml
+
+PLAY [Проверка связи с коммутаторами Nexus из inventory.ini через NX-API] ******
+
+TASK [Собираем факты через API] ************************************************
+ok: [10.1.100.1]
+ok: [10.1.100.231]
+ok: [10.1.100.201]
+
+TASK [Выводим результат] *******************************************************
+ok: [10.1.100.1] => {
+    "result": {
+        "ansible_facts": {
+            "ansible_net_api": "nxapi",
+            "ansible_net_gather_network_resources": [],
+            "ansible_net_gather_subset": [
+                "default"
+            ],
+            "ansible_net_hostname": "swOoBAccess01",
+            "ansible_net_image": "bootflash:///nxos64-cs.10.5.2.F.bin",
+            "ansible_net_license_hostid": "94HEFWXKGIK",
+            "ansible_net_model": "Nexus9000 C9500v",
+            "ansible_net_platform": "N9K-C9500v",
+            "ansible_net_python_version": "3.14.4",
+            "ansible_net_serialnum": "9BN723DV4FZ",
+            "ansible_net_system": "nxos",
+            "ansible_net_version": "10.5(2)",
+            "ansible_network_resources": {}
+        },
+        "changed": false,
+        "failed": false
+    }
+}
+ok: [10.1.100.231] => {
+    "result": {
+        "ansible_facts": {
+            "ansible_net_api": "nxapi",
+            "ansible_net_gather_network_resources": [],
+            "ansible_net_gather_subset": [
+                "default"
+            ],
+            "ansible_net_hostname": "switch",
+            "ansible_net_image": "bootflash:///nxos64-cs.10.5.2.F.bin",
+            "ansible_net_license_hostid": "933O218YR9T",
+            "ansible_net_model": "Nexus9000 C9500v",
+            "ansible_net_platform": "N9K-C9500v",
+            "ansible_net_python_version": "3.14.4",
+            "ansible_net_serialnum": "92GDURS4N65",
+            "ansible_net_system": "nxos",
+            "ansible_net_version": "10.5(2)",
+            "ansible_network_resources": {}
+        },
+        "changed": false,
+        "failed": false
+    }
+}
+ok: [10.1.100.201] => {
+    "result": {
+        "ansible_facts": {
+            "ansible_net_api": "nxapi",
+            "ansible_net_gather_network_resources": [],
+            "ansible_net_gather_subset": [
+                "default"
+            ],
+            "ansible_net_hostname": "swOoBCCore01",
+            "ansible_net_image": "bootflash:///nxos64-cs.10.5.2.F.bin",
+            "ansible_net_license_hostid": "9KSD1TJWXM1",
+            "ansible_net_model": "Nexus9000 C9500v",
+            "ansible_net_platform": "N9K-C9500v",
+            "ansible_net_python_version": "3.14.4",
+            "ansible_net_serialnum": "9DVXFY3LZH3",
+            "ansible_net_system": "nxos",
+            "ansible_net_version": "10.5(2)",
+            "ansible_network_resources": {}
+        },
+        "changed": false,
+        "failed": false
+    }
+}
+
+PLAY RECAP *********************************************************************
+10.1.100.1                 : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+10.1.100.201               : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+10.1.100.231               : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+```
+
+Я думаю, что хорошим вариантом был бы плейбук, который позволял просканировать всю сеть OoB, выполнив следующие задачи:
+- Произвести сканирование сети Oob (10.1.100.1 - 10.1.100.249) c целью обнаружения устройств с доступным NX-API.
+- Если обнаруженный IP присутствует в файле инвентаря (`inventory.ini`), то:
+    - если в инвентаре указан или отсутствует MAC-адрес, произвести его коррекцию (через запрос).
+- Если обнаружен неописанный IP - вывести карточку устройства:
+    - текущий IP-адреса устройства;
+    - MAC-адрес устройства;
+    - Серийный номер устройства;
+    - Имя хоста.
+
+Мой плейбук имеет следующий вид:
+
+<details>
+
+  <summary>Плейбук сканирования сети OoB (10.1.100.1 - 10.1.100.249): `~/scan_oob_network.yml`</summary>
+
+```yaml
 
 ---
+- name: "Сканирование сети OoB (10.1.100.1 - 10.1.100.249)"
+  hosts: localhost
+  gather_facts: false
 
+  tasks:
+    - name: "Проверка: указан ли файл инвентаря"
+      fail:
+        msg: "КРИТИЧЕСКАЯ ОШИБКА: Запускайте команду так: ansible-playbook -i inventory.ini scan_oob_network.yml"
+      when: groups['oob_network_cisco_nexus'] is not defined
 
-2026 Oct 24 20:04:31 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: Recieved DHCP offer from server ip  - 10.1.100.250
-2026 Oct 24 20:04:37 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Using DHCP, valid information received over Eth1/7 from 10.1.100.250
-2026 Oct 24 20:04:37 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Assigned IP address: 10.1.100.231
-2026 Oct 24 20:04:37 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Netmask: 255.255.255.0
-2026 Oct 24 20:04:37 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - DNS Server: 10.1.100.254
-2026 Oct 24 20:04:37 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Default Gateway: 10.1.100.254
-2026 Oct 24 20:04:37 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script Server: 10.1.100.250
-2026 Oct 24 20:04:37 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - Script Name: startup/poap_script.py
-2026 Oct 24 20:04:51 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - The POAP Script download has started
-2026 Oct 24 20:04:51 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9BHGJ71I5TT-50:0C:00:00:1B:08] - The POAP Script is being downloaded from [copy tftp://10.1.100.250/startup/poap_script.py bootflash:scripts/script.sh vrf default ]
-2026 Oct 24 20:04:53 switch %$ VDC-1 %$ %POAP-2-POAP_FAILURE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP boot file download failed.
-2026 Oct 24 20:04:57 switch %$ VDC-1 %$ %POAP-2-POAP_FAILURE: [9BHGJ71I5TT-50:0C:00:00:1B:08] - POAP DHCP discover phase failed
+    - name: "Сканируем IP-диапазон на порту 443/TCP средствами Linux"
+      shell: |
+        for i in {1..249}; do
+          (echo > /dev/tcp/10.1.100.$i/443) >/dev/null 2>&1 && echo "10.1.100.$i" &
+        done;
+        wait
+      args:
+        executable: /bin/bash
+      register: scan_output
+
+    - name: "Отбираем найденные живые адреса"
+      set_fact:
+        alive_hosts: "{{ scan_output.stdout_lines | default([]) }}"
+
+    - name: "Создаем список обнаруженных хостов"
+      debug:
+        msg: "Найдено активных устройств с включенным NX-API: {{ alive_hosts }}"
+
+    - name: "Формируем динамический инвентарь только для найденных устройств"
+      add_host:
+        name: "{{ item }}"
+        groups: dynamic_scan_group
+        ansible_connection: httpapi
+        ansible_network_os: cisco.nxos.nxos
+        ansible_user: ansible
+        ansible_password: P@$$w0rd
+        ansible_httpapi_use_ssl: true
+        ansible_httpapi_validate_certs: false
+        ansible_httpapi_port: 443
+      loop: "{{ alive_hosts }}"
+      when: alive_hosts | length > 0
+
+- name: "Сбор данных с найденных коммутаторов:"
+  hosts: dynamic_scan_group
+  gather_facts: false
+  serial: 1
+  collections:
+    - cisco.nxos
+
+  tasks:
+    - name: "show version"
+      cisco.nxos.nxos_command:
+        commands:
+          - show version
+      register: version_out
+
+    - name: "MAC-адреса"
+      cisco.nxos.nxos_command:
+        commands:
+          - show interface Vlan100
+      register: vlan_out
+
+    - name: "IP-адреса"
+      cisco.nxos.nxos_command:
+        commands:
+          - show ip interface brief
+      register: ip_brief_out
+
+    - name: "Парсинг полученных данных"
+      set_fact:
+        ver_text: "{{ version_out.stdout | join('\n') }}"
+        vlan_text: "{{ vlan_out.stdout | join('\n') }}"
+        ip_text: "{{ ip_brief_out.stdout | join('\n') }}"
+
+    - name: "Извлечение параметров регулярными выражениями"
+      set_fact:
+        dev_hostname: "{{ ver_text | regex_search('Device name:\\s+(\\S+)', '\\1') | first | default('unknown') | trim }}"
+        dev_serial: "{{ ver_text | regex_search('Processor Board ID\\s+(\\S+)', '\\1') | first | default('unknown') | trim }}"
+        dev_mac: "{{ vlan_text | regex_search('([0-9a-fA-F]{4}\\.[0-9a-fA-F]{4}\\.[0-9a-fA-F]{4})') | default('unknown') | trim }}"
+        all_configured_ips: "{{ ip_text | regex_findall('\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b') | unique }}"
+
+    # =================================================================
+    # УЛУЧШЕННЫЙ БЛОК ЛОКАЛЬНОГО АНАЛИЗА INVENTORY.INI ЧЕРЕЗ BASH
+    # =================================================================
+    - name: "Проверяем наличие текущего IP в inventory.ini"
+      shell: "grep -E '^{{ inventory_hostname }}(\\b|[[:space:]]+)' inventory.ini || true"
+      register: ip_check
+      delegate_to: localhost
+
+    - name: "Проверяем, пустой ли MAC или отсутствует поле target_mac для текущего IP"
+      shell: "grep -E '^{{ inventory_hostname }}(\\b|[[:space:]]+)' inventory.ini | grep -E -v 'target_mac=\"[0-9a-fA-F]' || true"
+      register: mac_empty_check
+      delegate_to: localhost
+
+    - name: "Ищем, за каким ЦЕЛЕВЫМ IP в инвентаре закреплен этот MAC"
+      shell: "grep -E 'target_mac=\"{{ dev_mac }}\"' inventory.ini | awk '{print $1}' || true"
+      register: mac_owner_check
+      delegate_to: localhost
+
+    - name: "Записываем результаты анализа в переменные"
+      set_fact:
+        host_in_inventory: "{{ ip_check.stdout != '' }}"
+        inv_mac_is_empty: "{{ mac_empty_check.stdout != '' }}"
+        matched_target_ip: "{{ mac_owner_check.stdout | default('') | trim }}"
+
+    # =================================================================
+    # СЦЕНАРИЙ 1: IP есть в инвентаре, но MAC пустой -> Дописываем MAC
+    # =================================================================
+    - name: "Запрос: Дописать MAC-адрес в инвентарь?"
+      pause:
+        prompt: "В инвентаре для IP {{ inventory_hostname }} не задан MAC. Обнаружен MAC: {{ dev_mac }}. Дописать его в inventory.ini? (yes/no)"
+      register: prompt_scen1
+      when: 
+        - host_in_inventory
+        - inv_mac_is_empty
+        - matched_target_ip == ''
+
+    - name: "Запись MAC в inventory.ini через sed"
+      shell: "sed -i 's/{{ inventory_hostname }}.*/{{ inventory_hostname }}      target_mac=\"{{ dev_mac }}\"/' inventory.ini"
+      delegate_to: localhost
+      when: 
+        - host_in_inventory
+        - inv_mac_is_empty
+        - matched_target_ip == ''
+        - prompt_scen1.user_input is defined
+        - prompt_scen1.user_input | lower == 'yes'
+
+    # =================================================================
+    # СЦЕНАРИЙ 2: Этот MAC жестко прописан за ДРУГИМ IP в инвентаре (Временный IP у известного свитча)
+    # =================================================================
+    - name: "Запрос: Обнаружен верный MAC на временном IP. Скорректировать?"
+      pause:
+        prompt: "Коммутатор {{ dev_hostname }} (MAC: {{ dev_mac }}) обнаружен на временном IP {{ inventory_hostname }}.\nВ инвентаре за этим MAC закреплен целевой IP: {{ matched_target_ip }}.\nПеренастроить коммутатор на ЦЕЛЕВОЙ IP {{ matched_target_ip }}? (yes/no)"
+      register: prompt_scen2
+      when: 
+        - matched_target_ip != ''
+        - matched_target_ip != inventory_hostname
+
+    - name: "Смена IP на самом коммутаторе на интерфейсе Vlan100"
+      cisco.nxos.nxos_config:
+        lines:
+          - no ip address dhcp
+          - ip address {{ matched_target_ip }}/24
+          - no shutdown
+        parents: interface Vlan100
+      when: 
+        - matched_target_ip != ''
+        - matched_target_ip != inventory_hostname
+        - prompt_scen2.user_input is defined
+        - prompt_scen2.user_input | lower == 'yes'
+      ignore_errors: true
+      register: change_ip_result
+
+    - name: "Ожидание доступности коммутатора по новому целевому IP"
+      wait_for:
+        host: "{{ matched_target_ip }}"
+        port: 443
+        delay: 5
+        timeout: 40
+      delegate_to: localhost
+      when: 
+        - prompt_scen2.user_input is defined
+        - prompt_scen2.user_input | lower == 'yes'
+      register: ip_reconnect
+
+    - name: "Отчет о переконфигурации"
+      debug:
+        msg: "Коммутатор успешно переведен с DHCP на статический IP {{ matched_target_ip }} и доступен по HTTPS."
+      when: 
+        - ip_reconnect.failed is not defined or not ip_reconnect.failed
+        - prompt_scen2.user_input is defined
+        - prompt_scen2.user_input | lower == 'yes'
+
+    # Сноска: Корректировка инвентаря в данном случае не требуется, 
+    # так как в вашем файле инвентаря уже прописана связка целевого IP и этого MAC.
+
+    # =================================================================
+    # СЦЕНАРИЙ 3: Полностью неизвестное устройство (Нет IP в инвентаре, и MAC никому не принадлежит)
+    # =================================================================
+    - name: "НАЙДЕННЫЕ НЕИЗВЕСТНЫЕ УСТРОЙСТВА (Вне инвентаря):"
+      debug:
+        msg:
+          - "========================================================="
+          - "ВНИМАНИЕ: Это устройство полностью отсутствует в инвентаре!"
+          - "Имя хоста          : {{ dev_hostname }}"
+          - "Текущий IP         : {{ inventory_hostname }}"
+          - "MAC-адрес VLAN100  : {{ dev_mac }}"
+          - "Серийный номер     : {{ dev_serial }}"
+          - "Все IP устройства  : {{ all_configured_ips | join(', ') }}"
+          - "========================================================="
+      when: 
+        - not host_in_inventory
+        - matched_target_ip == ''
 
 ```
 
+</details>
+
+Записывать далее весь вывод просто бессмысленно и я ограничусь только нужными фрагментами.
+
+Просканируем сеть OoB (`ansible-playbook scan_oob_network.yml`). Так как изначально `inventory.ini` не содержал переменной `target_mac`, то во время работы плейбук произведет 2 запроса на коррекцию инвентаря и выведет карточку нового коммутатора (`10.1.100.231`):
 ```
+...
+TASK [Запрос: Дописать MAC-адрес в инвентарь?] **********************************
+[Запрос: Дописать MAC-адрес в инвентарь?]
+В инвентаре для IP 10.1.100.1 не задан MAC. Обнаружен MAC: 5001.0000.1b08. Дописать его в inventory.ini? (yes/no): yes
+...
+TASK [Запрос: Дописать MAC-адрес в инвентарь?] **********************************
+[Запрос: Дописать MAC-адрес в инвентарь?]
+В инвентаре для IP 10.1.100.201 не задан MAC. Обнаружен MAC: 5002.0000.1b08. Дописать его в inventory.ini? (yes/no): yes
+...
+TASK [НАЙДЕННЫЕ НЕИЗВЕСТНЫЕ УСТРОЙСТВА (Вне инвентаря):] ************************
+ok: [10.1.100.231] => {
+    "msg": [
+        "=========================================================",
+        "ВНИМАНИЕ: Этот IP отсутствует в файле inventory.ini!",
+        "Имя хоста          : switch",
+        "IP-адрес           : 10.1.100.231",
+        "MAC-адрес VLAN100  : 500c.0000.1b08",
+        "Серийный номер     : 92GDURS4N65",
+        "Все IP устройства  : 10.1.100.231",
+        "========================================================="
+    ]
+}
+...
+```
+
+Сам инвентарь изменится следующим образом:
+```bash
+(ansible-venv) admin@srvoobservice01:~$ cat inventory.ini 
+[oob_network_cisco_nexus]
+10.1.100.1      target_mac="5001.0000.1b08"
+10.1.100.2
+10.1.100.201      target_mac="5002.0000.1b08"
+
+[backend_network]
+
+[frontend_network]
+
+[oob_network_cisco_nexus:vars]
+ansible_connection=httpapi
+ansible_network_os=cisco.nxos.nxos
+ansible_user=ansible
+ansible_password=P@$$w0rd
+ansible_httpapi_use_ssl=true
+ansible_httpapi_validate_certs=false
+ansible_httpapi_port=443
+```
+
+Как видно, скрипт правильно прописал MAC-адреса настроенным вручную коммутаторам. Попробуем прописать полученный MAC нового коммутатора (`10.1.100.231`) правильному IP-адресу инфентаря (`10.1.100.2`) и проверить работу плейбука по корекции конфигурации системы:
+```bash
+sed -i 's/^10.1.100.2.*/10.1.100.2      target_mac="500c.0000.1b08"/' inventory.ini
+```
+
+и запускаем плейбук снова:
+```
+...
+TASK [Запрос: Обнаружен верный MAC на временном IP. Скорректировать?] ***********
+[Запрос: Обнаружен верный MAC на временном IP. Скорректировать?]
+Коммутатор switch (MAC: 500c.0000.1b08) обнаружен на временном IP 10.1.100.231.
+В инвентаре за этим MAC закреплен целевой IP: 10.1.100.2.
+Перенастроить коммутатор на ЦЕЛЕВОЙ IP 10.1.100.2? (yes/no): yes
+ok: [10.1.100.231]
+
+TASK [Смена IP на самом коммутаторе на интерфейсе Vlan100] **********************
+[WARNING]: To ensure idempotency and correct diff the input configuration lines should be similar to how they appear if present in the running configuration on device
+changed: [10.1.100.231]
+
+TASK [Ожидание доступности коммутатора по новому целевому IP] *******************
+ok: [10.1.100.231 -> localhost]
+
+TASK [Отчет о переконфигурации] *************************************************
+ok: [10.1.100.231] => {
+    "msg": "Коммутатор успешно переведен с DHCP на статический IP 10.1.100.2 и доступен по HTTPS."
+}
+...
+```
+
+Проверим на самом коммутаторе:
+```
+switch# sh ip int br
+
+IP Interface Status for VRF "default"(1)
+Interface            IP Address      Interface Status
+Vlan100              10.1.100.2      protocol-up/link-up/admin-up
+```
+
+Т.е., 
