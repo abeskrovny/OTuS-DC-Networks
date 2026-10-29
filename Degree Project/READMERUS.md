@@ -606,6 +606,14 @@ Arista DCS-7050X4-48Y-4DF, имеющего 48 портов 25G (SFP28) + 4 по
 | ... |
 | OoB | swOoBAccess01 | Access | VLAN100 | `10.1.100.94/32` | - |
 | OoB | swOoBCCore01 | Collapsed Core | VLAN100 | `10.1.100.201/32` | - |
+| OoB | swFELeaf01 | Leaf | ???? | `10.1.101.1` | - |
+| OoB | swFELeaf02 | Leaf | ???? | `10.1.101.2` | - |
+
+---
+Надо доработать!!!
+---
+
+| OoB | swBELeaf01 | Leaf | ???? | `10.1.102.1` | - |
 | Backend | swBEComputeLeaf01 | Leaf | Loopback0 | `10.1.201.1/32` | `4200201001` |
 | Backend | swBEComputeLeaf02 | Leaf | Loopback0 | `10.1.201.2/32` | `4200201002` |
 | ... |
@@ -828,15 +836,6 @@ feature vtp
 vlan 100
   name NetMGMT
 !
-interface ethernet1/1-6
-  description --- Access (VLAN100): OoB Network Management Edge
-  switchport
-  switchport access vlan 100
-  spanning-tree port type edge
-  spanning-tree bpduguard enable
-  load-interval counter 1 60
-  no shutdown
-!
 interface ethernet1/7
   description --- Trunk (VLAN001): connection to swOoBCCore01:e1/1
   switchport
@@ -900,26 +899,6 @@ sudo apt update && sudo apt upgrade -y
 Устанавливаем необходимые пакеты:
 ```bash
 sudo apt install isc-dhcp-server nginx -y
-```
-
-Для работы с современными коллекциями Arista (AVD) рекомендуется устанавливать Ansible через `pip3`, чтобы получить актуальную версию:
-```bash
-sudo apt install python3-pip python3-venv git -y
-```
-
-Создаем виртуальное окружение (создается в текущей директории) и активируем его:
-```bash
-python3 -m venv ansible-venv
-source ansible-venv/bin/activate
-```
-
-Установка Ansible и модуля Arista eapi:
-```bash
-pip install --upgrade pip
-pip install ansible paramiko jsonrpclib cvprac
-ansible-galaxy collection install arista.avd
-ansible-galaxy collection install arista.eos
-ansible-galaxy collection install cisco.nxos
 ```
 
 Далее, настраиваем DHCP-сервер.
@@ -1406,22 +1385,67 @@ md5sum cisco_poap.py | awk '{print $1}' > cisco_poap.py.md5
 echo "#md5sum=\"$(cat cisco_poap.py.md5)\"" >> cisco_poap.py
 ```
 
-Далее, необходимо завершить процесс автоматической настройки, доверив его Ansible. Я устанавливал Ansible из домашней папки пользователя `admin`. Создадим в ней файл инвентаризации `inventory.ini` сразу под все сети фабрики:
+Далее, необходимо завершить процесс автоматической настройки, доверив его Ansible. 
+
+Для работы с современными коллекциями Arista (AVD) рекомендуется устанавливать Ansible через `pip3`, чтобы получить актуальную версию:
+```bash
+sudo apt install python3-pip python3-venv git -y
+```
+
+Создаем виртуальное окружение (создается в текущей директории) и активируем его:
+```bash
+python3 -m venv ansible-venv
+source ansible-venv/bin/activate
+```
+
+Установка Ansible:
+```bash
+pip install --upgrade pip
+pip install ansible paramiko jsonrpclib cvprac
+```
+
+Я устанавливал Ansible из домашней папки пользователя `admin`. Создадим в ней файл инвентаризации `inventory.ini` сразу под все сети фабрики:
 
 <details>
 
   <summary>Файл инвентаризации: `~/inventory.ini`</summary>
 
 ```ini
+# =================================================================
+# Сетевой сегмент Frontend (MGMT интерфейс)
+# =================================================================
 
-[oob_network_cisco_nexus]
+[frontend_network]
+
+# =================================================================
+# Сетевой сегмент Out-Of-Band (VLAN100 интерфейс)
+# =================================================================
+
+# --- Физические хосты: уровень доступа (Access):
+[oob_network_cisco_nexus_access]
 10.1.100.1
 10.1.100.2
+
+# --- Физические хосты: уровень вырожденного ядра (Colapsed Core):
+[oob_network_cisco_nexus_ccore]
 10.1.100.201
+
+# --- Группа всех коммутаторов сети Out-of-Band
+[oob_network_cisco_nexus:children]
+oob_network_cisco_nexus_access
+oob_network_cisco_nexus_ccore
+
+# =================================================================
+# Сетевой сегмент Backend (MGMT интерфейс)
+# =================================================================
 
 [backend_network]
 
-[frontend_network]
+# =================================================================
+# Переменные среды
+# =================================================================
+
+# --- Переменные коммуторов Cisco Nexus сети Out-of-Band (OoB)
 
 [oob_network_cisco_nexus:vars]
 ansible_connection=ssh
@@ -1434,12 +1458,12 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/
 </details>
 
 Так как на установленных вручную коммутаторах пользователь ansible не был сконфигурирован, необходимо его добавить:
-```
+```cli
 username ansible password P@$$w0rd role network-admin
 ```
 
 Если сейчас производить работу через ansible, новый коммутатор, а точнее - его отсутствие будет генерировать ошибку:
-```
+```bash
 (ansible-venv) admin@srvoobservice01:~$ ansible oob_network_cisco_nexus -i inventory.ini -m raw -a "show version"
 [ERROR]: Task failed: Failed to connect to the host via ssh: ssh: connect to host 10.1.100.2 port 22: No route to host
 Origin: <adhoc 'raw' task>
@@ -1547,7 +1571,7 @@ Shared connection to 10.1.100.201 closed.
 Как видно из вывода выше, остальные коммутаторы опрашиваются. 
 
 Так как мы не знаем адрес нового коммутатора, необходимо его узнать. Сделать это из консоли `swOoBCCore01` не получится, так как новый коммутатор не передает полученный SVI-интерфейсом адрес по DHCP через LLDP (настроить смену интерфейса управления на виртуальном коммутаторе также не имеет возможности). Остается вариант через пул DHCP-лиз (`cat /var/lib/dhcp/dhcpd.leases`):
-```
+```log
 lease 10.1.100.231 {
   starts 3 2026/10/28 16:16:28;
   ends 3 2026/10/28 17:16:28;
@@ -1562,7 +1586,7 @@ lease 10.1.100.231 {
 ```
 
 Проверяем связанность со стороны сервера автоматизации:
-```
+```bash
 (ansible-venv) admin@srvoobservice01:~$ ping -c 3 10.1.100.231
 PING 10.1.100.231 (10.1.100.231) 56(84) bytes of data.
 64 bytes from 10.1.100.231: icmp_seq=1 ttl=255 time=14.2 ms
@@ -1575,7 +1599,7 @@ rtt min/avg/max/mdev = 10.395/11.723/14.186/1.743 ms
 ```
 
 После этого, можно проверить работоспособность ansible:
-```
+```bash
 (ansible-venv) admin@srvoobservice01:~$ ansible all -i "10.1.100.231," -m raw -a "show version" -e "ansible_user=ansible ansible_password=P@$$w0rd ansible_connection=ssh ansible_network_os=default ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o WarnWeakCrypto=no'"
 10.1.100.231 | CHANGED | rc=0 >>
 Cisco Nexus Operating System (NX-OS) Software
@@ -1622,32 +1646,59 @@ Shared connection to 10.1.100.231 closed.
 Однако, работа в RAW-режиме весьма трудоемка и есть смысл перейти на специализированную коллекцию, соответствующую текущему оборудованию - Cisco Nexus и осуществлять взаимодействие через nxapi.
 
 Скачаем ее:
-```
+```bash
 ansible-galaxy collection download cisco.nxos:13.0.0
 ```
 
 > Автоматически, коллекция скачивается в каталог `./collections`, что может в дальнейшем создать проблемы во время установки.
 
 Скопируем файлы:
-```
+```bash
 cp collections/* ./
 ```
 
 и устанавливаем:
-```
+```bash
 ansible-galaxy collection install -r requirements.yml --force
 ```
 
 Поправим файл инвентаризации (`~/inventory.ini`) следующим образом:
-```
-[oob_network_cisco_nexus]
+```ini
+# =================================================================
+# Сетевой сегмент Frontend (MGMT интерфейс)
+# =================================================================
+
+[frontend_network]
+
+# =================================================================
+# Сетевой сегмент Out-Of-Band (VLAN100 интерфейс)
+# =================================================================
+
+# --- Физические хосты: уровень доступа (Access):
+[oob_network_cisco_nexus_access]
 10.1.100.1
 10.1.100.2
+
+# --- Физические хосты: уровень вырожденного ядра (Colapsed Core):
+[oob_network_cisco_nexus_ccore]
 10.1.100.201
+
+# --- Группа всех коммутаторов сети Out-of-Band
+[oob_network_cisco_nexus:children]
+oob_network_cisco_nexus_access
+oob_network_cisco_nexus_ccore
+
+# =================================================================
+# Сетевой сегмент Backend (MGMT интерфейс)
+# =================================================================
 
 [backend_network]
 
-[frontend_network]
+# =================================================================
+# Переменные среды
+# =================================================================
+
+# --- Переменные коммуторов Cisco Nexus сети Out-of-Band (OoB)
 
 [oob_network_cisco_nexus:vars]
 ansible_connection=httpapi
@@ -1660,7 +1711,7 @@ ansible_httpapi_port=443
 ```
 
 Следует отметить, что на всех коммутаторах необходимо сконфигурировать nxapi для последующей работы (на новом коммутаторе это сделано через POAP-скрипт):
-```
+```cli
 feature nxapi
 nxapi https port 443
 ```
@@ -1692,7 +1743,7 @@ nxapi https port 443
 </details>
 
 Проверим работу (`ansible-playbook -i inventory.ini check_facts.yml`):
-```
+```bash
 (ansible-venv) admin@srvoobservice01:~$ ansible-playbook -i inventory.ini check_facts.yml
 
 PLAY [Проверка связи с коммутаторами Nexus из inventory.ini через NX-API] ******
@@ -1999,7 +2050,7 @@ PLAY RECAP *********************************************************************
 Записывать далее весь вывод просто бессмысленно и я ограничусь только нужными фрагментами.
 
 Просканируем сеть OoB (`ansible-playbook scan_oob_network.yml`). Так как изначально `inventory.ini` не содержал переменной `target_mac`, то во время работы плейбук произведет 2 запроса на коррекцию инвентаря и выведет карточку нового коммутатора (`10.1.100.231`):
-```
+```log
 ...
 TASK [Запрос: Дописать MAC-адрес в инвентарь?] **********************************
 [Запрос: Дописать MAC-адрес в инвентарь?]
@@ -2028,14 +2079,41 @@ ok: [10.1.100.231] => {
 Сам инвентарь изменится следующим образом:
 ```bash
 (ansible-venv) admin@srvoobservice01:~$ cat inventory.ini 
-[oob_network_cisco_nexus]
+# =================================================================
+# Сетевой сегмент Frontend (MGMT интерфейс)
+# =================================================================
+
+[frontend_network]
+
+# =================================================================
+# Сетевой сегмент Out-Of-Band (VLAN100 интерфейс)
+# =================================================================
+
+# --- Физические хосты: уровень доступа (Access):
+[oob_network_cisco_nexus_access]
 10.1.100.1      target_mac="5001.0000.1b08"
 10.1.100.2
+
+# --- Физические хосты: уровень вырожденного ядра (Colapsed Core):
+[oob_network_cisco_nexus_ccore]
 10.1.100.201      target_mac="5002.0000.1b08"
+
+# --- Группа всех коммутаторов сети Out-of-Band
+[oob_network_cisco_nexus:children]
+oob_network_cisco_nexus_access
+oob_network_cisco_nexus_ccore
+
+# =================================================================
+# Сетевой сегмент Backend (MGMT интерфейс)
+# =================================================================
 
 [backend_network]
 
-[frontend_network]
+# =================================================================
+# Переменные среды
+# =================================================================
+
+# --- Переменные коммуторов Cisco Nexus сети Out-of-Band (OoB)
 
 [oob_network_cisco_nexus:vars]
 ansible_connection=httpapi
@@ -2053,7 +2131,7 @@ sed -i 's/^10.1.100.2.*/10.1.100.2      target_mac="500c.0000.1b08"/' inventory.
 ```
 
 и запускаем плейбук снова:
-```
+```log
 ...
 TASK [Запрос: Обнаружен верный MAC на временном IP. Скорректировать?] ***********
 [Запрос: Обнаружен верный MAC на временном IP. Скорректировать?]
@@ -2077,7 +2155,7 @@ ok: [10.1.100.231] => {
 ```
 
 Проверим на самом коммутаторе:
-```
+```cli
 switch# sh ip int br
 
 IP Interface Status for VRF "default"(1)
@@ -2085,4 +2163,20 @@ Interface            IP Address      Interface Status
 Vlan100              10.1.100.2      protocol-up/link-up/admin-up
 ```
 
-Т.е., 
+В результате предыдущих действий мы получили сеть, в которой правильно "расставлены" и подключены коммутаторы, они имеют правильные адреса, но, при этом, их настройка не финализирована.
+
+
+
+
+
+
+
+
+
+
+
+----
+
+ansible-galaxy collection install arista.avd
+ansible-galaxy collection install arista.eos
+ansible-galaxy collection install cisco.nxos
