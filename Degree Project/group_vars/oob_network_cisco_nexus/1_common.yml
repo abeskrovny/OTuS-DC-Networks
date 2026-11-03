@@ -1,0 +1,30 @@
+---
+# =================================================================
+# СЛОЙ 1: ОБЩИЕ ПОЛИТИКИ СЕГМЕНТА OOB (COMMON SPECS)
+# =================================================================
+
+# Системные идентификаторы и доменная иерархия
+oob_domain_name: "OoB.local"
+oob_timezone: "MSK"
+oob_timezone_offset: 3
+
+# Выделенный VLAN-карантин для неиспользуемых портов
+oob_dummy_vlan_id: 999
+oob_dummy_vlan_name: "Dummy:OFF"
+
+# Служба разрешения имен (DNS) внутри контура управления
+oob_dns_servers:
+  - 10.1.100.254
+  - 8.8.8.8
+
+# Служба единого точного времени (NTP)
+oob_ntp_servers:
+  - 10.1.100.254
+
+# Информационный баннер безопасности (MOTD)
+oob_banner: |
+  ==================================================================
+  WARNING: UNAUTHORIZED ACCESS TO THIS OOB SWITCH IS STRICTLY PROHIBITED
+  This system is part of the AI Factory Management Infrastructure.
+  All activities are logged and monitored by the SOC team.
+  ==================================================================

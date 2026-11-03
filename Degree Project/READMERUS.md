@@ -1378,11 +1378,58 @@ if __name__ == "__main__":
 
 </details>
 
+> Следует отметить, что под управлением POAP, коммутатор "поднимает" интерфейсы в режиме L3. Если мы попытаемся задать конфигурацию порта обращенного в сторону ядра в основном скрипте, порт "моргнет" при переинициализации и этого хватит, чтобы операционная система NX-OS детекрировала падение линка на интерфейсе, через который идет POAP, что является критическим событием (Link Down). В резульате чего скрипт завершится аварийно. Чтобы избежать этого, необходимо производить запись в, так называемый "scheduled config".
+
 После того, как скрипт протестирован и считается полностью работающим (протестировать скрипт проще всего в командном режиме коммутатора, ипользуя `copy tftp://10.1.100.250/cisco_poap.py bootflash:scripts/script.sh vrf default` для загрузки и `python bootflash:scripts/script.sh` - для исполнения), необходимо пересчитать md5-хэш и дописать его в хвост скрипта:
 ```bash
-sed -i '/^#md5sum/d' cisco_poap.py
-md5sum cisco_poap.py | awk '{print $1}' > cisco_poap.py.md5
-echo "#md5sum=\"$(cat cisco_poap.py.md5)\"" >> cisco_poap.py
+sudo sed -i '/^#md5sum/d' /var/www/html/startup/cisco_poap.py
+md5sum /var/www/html/startup/cisco_poap.py | awk '{print $1}' > cisco_poap.py.md5
+echo "#md5sum=\"$(cat cisco_poap.py.md5)\"" | sudo tee -a /var/www/html/startup/cisco_poap.py > /dev/null
+```
+
+Финальгная прогонка скрипта: 
+```log
+2026 Oct 31 16:03:02 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: Recieved DHCP offer from server ip  - 10.1.100.250
+2026 Oct 31 16:03:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9B43WSIW1GR-50:0C:00:00:1B:08] - Using DHCP, valid information received over Eth1/7 from 10.1.100.250
+2026 Oct 31 16:03:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9B43WSIW1GR-50:0C:00:00:1B:08] - Assigned IP address: 10.1.100.245
+2026 Oct 31 16:03:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9B43WSIW1GR-50:0C:00:00:1B:08] - Netmask: 255.255.255.0
+2026 Oct 31 16:03:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9B43WSIW1GR-50:0C:00:00:1B:08] - DNS Server: 10.1.100.254
+2026 Oct 31 16:03:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9B43WSIW1GR-50:0C:00:00:1B:08] - Default Gateway: 10.1.100.254
+2026 Oct 31 16:03:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9B43WSIW1GR-50:0C:00:00:1B:08] - Script Server: 10.1.100.250
+2026 Oct 31 16:03:08 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9B43WSIW1GR-50:0C:00:00:1B:08] - Script Name: cisco_poap.py
+2026 Oct 31 16:03:22 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9B43WSIW1GR-50:0C:00:00:1B:08] - The POAP Script download has started
+2026 Oct 31 16:03:22 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9B43WSIW1GR-50:0C:00:00:1B:08] - The POAP Script is being downloaded from [copy tftp://10.1.100.250/cisco_poap.py bootflash:scripts/script.sh vrf default ]
+2026 Oct 31 16:03:25 switch %$ VDC-1 %$ %POAP-2-POAP_SCRIPT_DOWNLOADED: [9B43WSIW1GR-50:0C:00:00:1B:08] - Successfully downloaded POAP script file
+2026 Oct 31 16:03:25 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9B43WSIW1GR-50:0C:00:00:1B:08] - Script file size 5826, MD5 checksum 6f6f8c800ad13b43f5296c3ff85c9ffb
+2026 Oct 31 16:03:25 switch %$ VDC-1 %$ %POAP-2-POAP_INFO: [9B43WSIW1GR-50:0C:00:00:1B:08] - MD5 checksum received from the script file is 6f6f8c800ad13b43f5296c3ff85c9ffb
+2026 Oct 31 16:03:25 switch %$ VDC-1 %$ %POAP-2-POAP_SCRIPT_STARTED_MD5_VALIDATED: [9B43WSIW1GR-50:0C:00:00:1B:08] - POAP script execution started(MD5 validated)
+[POAP-LOG]: Starting safe configuration merge...
+[POAP-LOG]: BOOT IMAGE FOUND: nxos64-cs.10.5.2.F.bin
+[POAP-LOG]: Forcing boot image configuration for: nxos64-cs.10.5.2.F.bin
+[POAP-LOG]: Executing CLI bypass: configure terminal ; boot nxos bootflash:/nxos64-cs.10.5.2.F.bin
+[POAP-LOG]: Boot image successfully set via CLI.
+[POAP-LOG]: Waiting for LLDP looking for neighbors...
+[POAP-LOG]: LLDP: Get neighbors...
+[POAP-LOG]: SUCCESS! Core switch found via LLDP on port: Eth1/7
+[POAP-LOG]: Selected trunk port for Ansible link: Eth1/7
+2026 Oct 31 16:04:45 switch %$ VDC-1 %$ %SECURITYD-2-FEATURE_NXAPI_ENABLE: Feature nxapi is being enabled on HTTPS.
+[POAP-LOG]: Running-config updated successfully.
+[POAP-LOG]: Scheduled-config successfully staged.
+[POAP-LOG]: POAP Success. Telling switch to merge, apply and complete.
+2026 Oct 31 16:05:00 switch %$ VDC-1 %$ %POAP-2-POAP_SCRIPT_EXEC_SUCCESS: [9B43WSIW1GR-50:0C:00:00:1B:08] - POAP script execution success
+2026 Oct 31 16:05:02 switch %$ VDC-1 %$ %POAP-2-POAP_RELOAD_DEVICE: [9B43WSIW1GR-50:0C:00:00:1B:08] - Reload device
+```
+
+После перезагрузки он будет скопирован в `startup-config`:
+```log
+2026 Oct 31 25:38:07 switch %$ VDC-1 %$ %ASCII-CFG-2-CONF_CONTROL: System ready
+[########################################] 100%
+Copy complete, now saving to disk (please wait)...
+Copy complete.
+Auto provisioning complete
+
+User Access Verification
+ login:
 ```
 
 Далее, необходимо завершить процесс автоматической настройки, доверив его Ansible. 
@@ -1402,7 +1449,7 @@ source ansible-venv/bin/activate
 Установка Ansible:
 ```bash
 pip install --upgrade pip
-pip install ansible paramiko jsonrpclib cvprac
+pip install ansible paramiko jsonrpclib cvprac scp ansible-pylibssh
 ```
 
 Я устанавливал Ansible из домашней папки пользователя `admin`. Создадим в ней файл инвентаризации `inventory.ini` сразу под все сети фабрики:
@@ -2150,7 +2197,7 @@ Vlan100              10.1.100.2      protocol-up/link-up/admin-up
 В результате предыдущих действий мы получили сеть, в которой правильно "расставлены" и подключены коммутаторы, они имеют адреса, соответствующие IP-плану, перенесенному в инвентарь, но, при этом, их настройка не финализирована. Далее двигаться с использованием ручного управления становится не совсем хорошей идеей.
 
 ##### 3 этап: Промышленное управление конфигурацией
-Разработка крупномасштабной сетевой инфраструктуры (такой как фабрика искусственного интеллекта) требует перехода от ручного управления и разрозненных скриптов к системной автоматизации. Использование одиночных плейбуков для первичного сканирования и инвентаризации — это важный, но лишь стартовый этап. Для полноценной раскатки целевых конфигураций во всех трех изолированных контурах (Out-of-Band, Frontend и Backend) критически важно внедрить методологию IaC (Infrastructure as Code - Инфраструктура как код) и построить строгую структуру каталогов автоматизации.
+Разработка крупномасштабной сетевой инфраструктуры требует перехода от ручного управления и разрозненных скриптов к системной автоматизации. Использование одиночных плейбуков для первичного сканирования и инвентаризации — это важный, но лишь стартовый этап. Для полноценной раскатки целевых конфигураций во всех трех изолированных контурах (Out-of-Band, Frontend и Backend) критически важно внедрить методологию IaC (Infrastructure as Code - Инфраструктура как код) и построить строгую структуру каталогов автоматизации.
 
 IaC — это подход к управлению и подготовке сетевой инфраструктуры с помощью конфигурационных файлов, а не путем ручной настройки устройств через CLI или веб-интерфейсы. Сеть описывается декларативно (в виде финального состояния), а инструменты автоматизации сами приводят устройства к этому состоянию.
 Разработка четкой структуры каталогов необходима по следующим причинам:
@@ -2165,13 +2212,33 @@ IaC — это подход к управлению и подготовке се
 
 Таким образом, переход от одиночного скрипта `scan_oob_network.yml` к комплексной иерархической структуре IaC позволяет обеспечить полную воспроизводимость, наблюдаемость и автоматизированный контроль сетевой фабрики искусственного интеллекта на всех этапах ее жизненного цикла.
 
-Структура IaC:
+С точки зрения лучших практик IaC разделять настройки по отдельным файлам, содержащим настройки отдельных компонентов — это гораздо более грамотный подход, называеый композицией конфигурационных слоев.
+
+В основу автоматизации управления конфигурациями проектируемой ИИ-фабрики положен принцип Data-Driven Automation (автоматизация, управляемая данными), реализуемый через методологию Infrastructure as Code (IaC). Суть данного подхода заключается в полном разделении абстрактной логики автоматизации от конкретных физических и системных параметров целевой инфраструктуры.
+
+Внедрение многослойной модели репозитория автоматизации решает проблему жесткой связанности («хардкодинга») параметров, когда изменения в топологии или составе оборудования требуют переписывания самого программного кода плейбуков. Выделение независимых слоев данных позволяет создать универсальную, масштабируемую систему, способную бесшовно адаптироваться к расширению фабрики, изменению векторов безопасности или внедрению мультивендорных аппаратных платформ.
+
+Целевая архитектура системы конфигурационного менеджмента представлена следующими взаимосвязанными слоями, каждый из которых выполняет строго изолированную роль:
+- **Слой общих политик сегмента (Common Specs)**: Константный уровень, определяющий базовые глобальные параметры функционирования конкретного сетевого контура. Данный слой содержит общесистемные спецификации, такие как приветственные баннеры (MOTD), адресные пространства серверов доменных имен (DNS), параметры синхронизации времени (NTP) и региональные настройки часовых поясов. Изменения на этом уровне мгновенно транслируются на всю подчиненную инфраструктуру.
+- **Слой аутентификации и авторизации (AAA Specs)**: Выделенный уровень управления учетными записями и правами доступа. Слой инкапсулирует параметры встроенных локальных пользователей (администраторов и операторов сети) с криптографическими хешами их паролей, а также спецификации интеграции с централизованными корпоративными системами аутентификации. Сюда выносятся адреса, порты и ключи взаимодействия с серверами RADIUS и TACACS+.
+- **Слой сетевой безопасности (Security Specs)**: Оборонный контур сетевой конфигурации, регламентирующий правила фильтрации трафика и защиту плоскости управления (Control Plane). Этот слой содержит упорядоченные списки контроля доступа (ACL) для виртуальных линий терминального доступа (VTY), параметры криптографических SSH-ключей и SSL-сертификатов. Дополнительно на этом уровне определяются параметры защиты инфраструктуры от штормов и лавинного флуда (Storm Control) посредством жесткого лимитирования broadcast, multicast и unknown-unicast трафика, а также включаются защитные механизмы DHCP Snooping и Dynamic ARP Inspection (DAI) для предотвращения атак перехвата данных.
+- **Слой мониторинга и логирования (Management Specs)**: Уровень обеспечения наблюдаемости (Observability) сетевой фабрики. Слой описывает конфигурации протокола SNMP, включая параметры физического расположения устройств, контактные данные администраторов и списки авторизованных строк сообществ (Communities) с разграничением ролей доступа. Также здесь определяются адреса централизованных серверов сбора логов (Syslog) и уровни важности логируемых системных событий.
+- **Слой политик качества обслуживания (QoS Specs)**: Уровень, отвечающий за предсказуемость задержек и приоритезацию критически важного трафика. На данном слое классифицируются типы трафика (например, выделение сессий управления SSH, SNMP и API в высокоприоритетный класс) и сопоставляются с соответствующими метками DSCP/CoS. Для вычислительного контура (Backend) в этот слой закладываются параметры Priority Flow Control (PFC) и Explicit Congestion Notification (ECN), обеспечивающие гарантированную передачу данных без потерь.
+- **Абстрактные структуры данных интерфейсов (Profile Specs)**: Слой-конструктор, в котором описываются шаблоны или профили поведения для различных типов сетевых соединений. Здесь декларативно задаются параметры для линков доступа (Access), транковых соединений (Trunk), агрегированных каналов (Port-Channel / LACP) и интерфейсов точка-точка (p2p). Профили содержат настройки Spanning Tree (Portfast, BPDU Guard), политики Storm Control и MTU, но не содержат привязки к конкретным номерам физических портов.
+- **Слой топологии интерфейсов (Host Specs / host_vars)**: Топологическая карта инфраструктуры, разрабатываемая индивидуально для каждого физического коммутатора. Этот слой является единственным местом, где фиксируются конкретные номера интерфейсов (например, Ethernet1/1) и их текстовые описания (Description). Каждому физическому порту в этом файле просто присваивается ссылка на готовый абстрактный профиль из предыдущего слоя, что позволяет легко менять коммутацию при физической перекоммутации кабелей в стойках.
+- **Слой вендорских шаблонов (Vendor Templates)**: Программный уровень рендеринга, состоящий из изолированных, компактных шаблонов Jinja2, разработанных под конкретные операционные системы вендоров (Cisco NX-OS, Arista EOS и др.). Эти шаблоны являются «чистыми» трансляторами: они берут структурированные данные из всех вышеперечисленных слоев и переводят их в синтаксис конкретного оборудования, формируя итоговый конфигурационный файл («золотой стандарт»).
+
+Благодаря многослойной структуре, общие политики (например, база пользователей AAA или настройки SNMP из слоев 2 и 4) пишутся один раз и без изменений переиспользуются во всех трех сетях. Различаться будут только шаблоны интерфейсов и специфичные протокольные слои, что минимизирует дублирование кода, исключает рассинхронизацию настроек и гарантирует полную воспроизводимость конфигурации ЦОД из файлов данных.
+
+Структура IaC (***надо скорриектировать по факту***):
 ```
 ansible-datacenter-iac/
 ├── ansible.cfg                  # Глобальные настройки Ansible (пути к ролям, параметры оптимизации)
 ├── inventory.ini                # Главный файл инвентаря (группы устройств по сетям и ролям)
 ├── site.yml                     # Главный плейбук, вызывающий конфигурацию всех сегментов
-├── scan_oob_network.yml         # Плейбук первичного поиска и валидации (текущий скрипт)
+├── scan_oob_network.yml         # Плейбук первичного поиска и валидации сети OoB
+├── scan_backend_network.yml     # Плейбук первичного поиска и валидации сети Backend
+├── scan_frontend_network.yml    # Плейбук первичного поиска и валидации сети Frontend
 │
 ├── group_vars/                  # Переменные групп устройств
 │   ├── all.yml                  # Общие параметры (DNS, Syslog, NTP для всего ЦОД)
@@ -2186,8 +2253,6 @@ ansible-datacenter-iac/
 │
 ├── host_vars/                   # Индивидуальные переменные конкретных коммутаторов
 │   ├── swOoBAccess01.yml        # Конкретный MAC, привязка портов
-│   ├── swBackendLeaf01.yml      # Уникальный Router-ID, Loopback IP, системный MAC
-│   └── swFrontendLeaf01.yml     # Специфичные настройки стыка с фронтенд-серверами
 │
 ├── roles/                       # Переиспользуемые блоки логики (собственные или внешние)
 │   ├── network_base/            # Роль базовой настройки (баннеры, SSH, SNMP, локальные пользователи)
@@ -2200,13 +2265,933 @@ ansible-datacenter-iac/
     └── arista_eos_base.j2
 ```
 
+###### Слой 1: Слой общих политик сегмента (Common Specs)
+Этот слой определяет глобальные системные константы, которые будут абсолютно идентичны для всех трех коммутаторов сегмента OoB (`10.1.100.0/24`): имя домена, DNS, NTP и часовой пояс.
+
+Создаем файл переменных: `group_vars/oob_network_cisco_nexus/1_common.yml`:
+```bash
+mkdir -p ~/group_vars/oob_network_cisco_nexus
+touch ~/group_vars/oob_network_cisco_nexus/1_common.yml
+```
+
+И наполняем его следующим содержанием:
+
+<details>
+
+  <summary>Переменные общих политик сети OoB: `~/group_vars/oob_network_cisco_nexus/1_common.yml`</summary>
+
+!(Переменные общих политик сети OoB)[group_vars/oob_network_cisco_nexus/1_common.yml]
+
+```yaml
+---
+# =================================================================
+# СЛОЙ 1: ОБЩИЕ ПОЛИТИКИ СЕГМЕНТА OOB (COMMON SPECS)
+# =================================================================
+
+# Системные идентификаторы и доменная иерархия
+oob_domain_name: "OoB.local"
+oob_timezone: "MSK"
+oob_timezone_offset: 3
+
+# Выделенный VLAN-карантин для неиспользуемых портов
+oob_dummy_vlan_id: 999
+oob_dummy_vlan_name: "Dummy:OFF"
+
+# Служба разрешения имен (DNS) внутри контура управления
+oob_dns_servers:
+  - 10.1.100.254
+  - 8.8.8.8
+
+# Служба единого точного времени (NTP)
+oob_ntp_servers:
+  - 10.1.100.254
+
+# Информационный баннер безопасности (MOTD)
+oob_banner: |
+  ==================================================================
+  WARNING: UNAUTHORIZED ACCESS TO THIS OOB SWITCH IS STRICTLY PROHIBITED
+  This system is part of the AI Factory Management Infrastructure.
+  All activities are logged and monitored by the SOC team.
+  ==================================================================
+```
+
+</details>
+
+> Использование числовых префиксов в именах файлов (например, `1_common.yml`, `2_aaa.yml`) в IaC-проектах решает две фундаментальные задачи:
+> 1. **Строгая последовательность рендеринга и применения**: В сетевой автоматизации порядок применения настроек критичен. Нельзя настроить политики QoS (Слой 5) или интерфейсы (Слой 6), если предварительно не инициализированы базовые системные модули (Слой 1) или не созданы пользователи и права доступа (Слой 2). Числа гарантируют, что и человек, и автоматические скрипты сборщика будут обрабатывать слои в строго определенном архитектурном порядке.
+> 2. **Визуальная читабельность для инженера**: Файлы в каталогах операционной системы и Git по умолчанию сортируются по алфавиту. Без префиксов файлы `aaa.yml`, `common.yml` и `security.yml` разбросало бы в случайном порядке. Числа принудительно выстраивают файлы в логическую цепочку «от простого к сложному», превращая каталог в наглядную пошаговую карту слоев инфраструктуры.
+
+Теперь создаем изолированный мини-шаблон, который отвечает исключительно за перевод этих данных в синтаксис Cisco NX-OS:
+
+```bash
+mkdir -p ~/roles/fabric_generator/templates/cisco_nxos
+touch ~/roles/fabric_generator/templates/cisco_nxos/1_common.j2
+```
+
+и наполняем следующим содержимым:
+
+<details>
+
+  <summary>Шаблон (Jinja-скрипт) общих политик сети OoB: `~/group_vars/oob_network_cisco_nexus/1_common.yml`</summary>
+
+```jinja
+! Шаблон Слоя 1 (Common Specs)
+clock timezone {{ oob_timezone }} {{ oob_timezone_offset }} 0
+ip domain-name {{ oob_domain_name }}
+
+{% for dns in oob_dns_servers %}
+ip name-server {{ dns }}
+{% endfor %}
+
+{% for ntp in oob_ntp_servers %}
+ntp server {{ ntp }} use-vrf default
+{% endfor %}
+ntp master 5
+
+banner motd "{{ oob_banner | trim | replace('\n', ' ') }}"
+```
+
+</details>
+
+Фактически, файл `roles/fabric_generator/templates/cisco_nxos/1_common.j2` относится к слой 8.
+
+###### Слой 2: Слой аутентификации и авторизации (AAA Specs)
+Данный слой содержит настройки локальных пользователей admin и ansible с административными правами, ААА-сервера и логику работы (файл `~/group_vars/oob_network_cisco_nexus/2_aaa.yml`) со следующим содержанием:
+
+<details>
+
+  <summary>Переменные слоя аутентификации и авторизации сети OoB: `~/group_vars/oob_network_cisco_nexus/2_aaa.yml`</summary>
+
+```yaml
+---
+# =================================================================
+# СЛОЙ 2: АУТЕНТИФИКАЦИЯ И АВТОРИЗАЦИЯ СЕГМЕНТА OOB (AAA SPECS)
+# =================================================================
+
+# Глобальные учетные записи на основе новых переменных проекта
+aaa_ansible_username: "ansible"
+aaa_ansible_password: "P@$$w0rd"
+aaa_admin_username: "admin"
+aaa_admin_password: "P@$$w0rd"
+
+oob_tacacs:
+  enabled: true
+  timeout: 5
+  key: "TacacsSecretKey123"
+  servers:
+    - host: "10.1.100.251"
+      description: "Primary TACACS+ Server"
+
+oob_radius:
+  enabled: true
+  timeout: 5
+  key: "RadiusSecretKey456"
+  servers:
+    - host: "10.1.100.251"
+      description: "Backup RADIUS Server"
+
+oob_aaa_policies:
+  vty_authentication: "group TACACS_GROUP RADIUS_GROUP local"
+  vty_authorization: "group TACACS_GROUP local"
+  vty_accounting: "group TACACS_GROUP local"
+  console_authentication: "local"
+  console_authorization: "local"
+```
+
+Добавим вендорский шаблон для этого слоя:
+
+<details>
+
+  <summary>Шаблон слоя аутентификации и авторизации сети OoB: `~/roles/fabric_generator/templates/cisco_nxos/2_aaa.j2`</summary>
+
+```jinja
+! Layer 2 Template (AAA Specs)
+{% if oob_tacacs.enabled %}
+feature tacacs+
+{% endif %}
+
+! Add users
+username {{ aaa_admin_username }} password {{ aaa_admin_password }} role network-admin
+username {{ aaa_ansible_username }} password {{ aaa_ansible_password }} role network-admin
+
+! TACACS+ Servers configuration
+{% if oob_tacacs.enabled %}
+{% for server in oob_tacacs.servers %}
+tacacs-server host {{ server.host }} key 0 {{ oob_tacacs.key }} timeout {{ oob_tacacs.timeout }}
+{% endfor %}
+
+aaa group server tacacs grpTACACS01
+{% for server in oob_tacacs.servers %}
+  server {{ server.host }}
+{% endfor %}
+{% endif %}
+
+! RADIUS Servers configuration
+{% if oob_radius.enabled %}
+{% for server in oob_radius.servers %}
+radius-server host {{ server.host }} key 0 {{ oob_radius.key }} timeout {{ oob_radius.timeout }}
+{% endfor %}
+
+aaa group server radius grpRADIUS01
+{% for server in oob_radius.servers %}
+  server {{ server.host }}
+{% endfor %}
+{% endif %}
+
+! Global AAA enforcement for remote connections (VTY, SSH, NX-API)
+aaa authentication login default group grpTACACS01 group grpRADIUS01 local
+aaa authorization config-commands default group grpTACACS01 local
+aaa authorization commands default group grpTACACS01 local
+
+! Strict local isolation for physical console access (Break-Glass)
+aaa authorization commands console local
+aaa authentication login console local
+```
+
+</details>
+
+###### Слой 3: Слой сетевой безопасности (Security Specs)
+Этот слой обеспечивает комплексную защиту самого коммутатора и подключенной к нему инфраструктуры. В рамках сети Out-of-Band (OoB) критически важно защитить плоскость управления (Control Plane), ограничить удаленный доступ, а также предотвратить возможные сетевые аномалии со стороны подключенных IPMI-интерфейсов серверов и контроллеров PDU (защита от широковещательного флуда и подмены IP/DHCP).
+
+Файл переменных `~/group_vars/oob_network_cisco_nexus/3_security.yml` имеет следующий вид:
+```yaml
+---
+# =================================================================
+# СЛОЙ 3: СЕТЕВАЯ БЕЗОПАСНОСТЬ СЕГМЕНТА OOB (SECURITY SPECS)
+# =================================================================
+
+# Параметры криптографии для терминального доступа (SSH)
+oob_security_ssh:
+  key_bits: 4096
+  version: 2
+  server_enable: true
+
+# Настройки защиты от лавинного флуда (Storm Control) на портах доступа
+# Лимиты задаются в процентах от общей пропускной способности интерфейса
+oob_security_storm_control:
+  broadcast_level_percent: "1.0"      # Жесткое ограничение broadcast (не более 1%)
+  multicast_level_percent: "5.0"      # Ограничение multicast-трафика (не более 5%)
+  unknown_unicast_level_percent: "5.0" # Ограничение неизвестного unicast (не более 5%)
+
+# Функционал обеспечения легитимности DHCP-клиентов (DHCP Snooping)
+oob_security_dhcp_snooping:
+  enabled: true
+  vlan: 100
+
+# Список контроля доступа (ACL) для защиты линий удаленного управления (VTY)
+# Разрешает доступ к коммутатору только из доверенной подсети администраторов
+oob_management_acl:
+  name: "aclVTYInboundAccess"
+  rules:
+    - seq: 10
+      action: "permit"
+      protocol: "tcp"
+      source: "10.1.100.0/24"          # Подсеть управления OoB
+      destination: "any"
+      port: "eq 22"                    # SSH
+    - seq: 20
+      action: "permit"
+      protocol: "tcp"
+      source: "10.1.100.240/24"
+      destination: "any"
+      port: "eq 443"                  # NX-API / HTTPS
+    - seq: 30
+      action: "permit"
+      protocol: "udp"
+      source: "10.1.100.242/24"
+      destination: "any"
+      port: "eq 161"                  # SNMP
+    - seq: 100
+      action: "deny"
+      protocol: "ip"
+      source: "any"
+      destination: "any"
+```
+
+И, соответственно, вендорский шаблон для этого слоя (`~/roles/fabric_generator/templates/cisco_nxos/3_security.j2`):
+```jinja
+! Шаблон Слоя 3 (Security Specs)
+
+! Конфигурация параметров SSH
+{% if oob_security_ssh.server_enable %}
+feature ssh
+ssh key rsa {{ oob_security_ssh.key_bits }} force
+ip ssh server version {{ oob_security_ssh.version }}
+{% endif %}
+
+! Создание списка контроля доступа для линий управления
+ip access-list {{ oob_management_acl.name }}
+{% for rule in oob_management_acl.rules %}
+  {{ rule.seq }} {{ rule.action }} {{ rule.protocol }} {{ rule.source }} {{ rule.destination }} {{ rule.port | default('') }}
+{% endfor %}
+
+! Применение ACL к терминальным линиям (VTY)
+line vty
+  ip access-class {{ oob_management_acl.name }} in
+
+! Конфигурация глобального DHCP Snooping
+{% if oob_security_dhcp_snooping.enabled %}
+ip dhcp snooping
+ip dhcp snooping vlan {{ oob_security_dhcp_snooping.vlan }}
+no ip dhcp snooping information option
+{% endif %}
+```
+
+> Команды активации защиты от флуда (`storm-control`) и привязки доверенных портов DHCP Snooping (`ip dhcp snooping trust`) генерируются на уровне интерфейсов. Шаблон интерфейсов (Слой 8) будет динамически считывать пороговые значения `oob_security_storm_control` из этого слоя и применять их индивидуально к физическим портам из `host_vars`.
+
+###### Слой 4: Слой мониторинга и логирования (Management Specs)
+Этот слой обеспечивает наблюдаемость (Observability) сетевой инфраструктуры. В рамках сети Out-of-Band (OoB) критически важно настроить отправку событий на удаленные сервера сбора логов (Syslog), чтобы инциденты безопасности оперативно попадали в SIEM-систему SOC-центра (его пока нет, но я укажу свободный IP-адрес). Также здесь описываются параметры SNMP для централизованного мониторинга производительности и состояния оборудования системами класса NMS/DCIM.
+
+Я сторонник безопасного стандарта SNMPv3. В отличие от SNMPv2c, где авторизация проходила по открытому текстовому слову (community), SNMPv3 внедряет криптографическую модель безопасности (USM), требующую явного указания пользователей, групп, алгоритмов аутентификации (SHA/MD5) и шифрования (AES/DES).
+
+Файл переменных `~/group_vars/oob_network_cisco_nexus/4_management.yml`:
+```yaml
+---
+# =================================================================
+# СЛОЙ 4: МОНИТОРИНГ И ЛОГИРОВАНИЕ СЕГМЕНТА OOB (MANAGEMENT SPECS)
+# =================================================================
+
+# Глобальные параметры протоколов обнаружения соседей
+oob_management_lldp: true
+oob_management_cdp: false
+
+# Конфигурация службы удаленного логирования (Syslog)
+oob_syslog:
+  enabled: true
+  severity_level: 6
+  servers:
+    - 10.1.100.252
+
+# Конфигурация защищенной службы мониторинга SNMPv3 (Криптомодель AuthPriv)
+oob_snmp:
+  enabled: true
+  location: "DataCenter: AI Factory/Row 01"
+  contact: "admins@local"
+  
+  # Определение пользователей и параметров шифрования SNMPv3
+  # Использование режима authpriv гарантирует и проверку подлинности, и шифрование трафика
+  v3_users:
+    - username: "snmp-monitoring"
+      group: "network-operator"          # Роль в Cisco NX-OS (Только чтение)
+      auth_protocol: "sha"               # Алгоритм проверки подлинности
+      auth_key: "AuthSecretKeySHA123"    # Мин. 8 символов
+      priv_protocol: "aes-128"           # Алгоритм шифрования пакетов
+      priv_key: "PrivSecretKeyAES456"    # Мин. 8 символов
+
+  # Настройка отправки криптографических оповещений (Traps) по SNMPv3
+  traps:
+    enabled: true
+    receiver: "10.1.100.253"
+    username: "snmp-monitoring"
+```
+
+и соответствующий ему Jinja-шаблон (`~/roles/fabric_generator/templates/cisco_nxos/4_management.j2`):
+```jinja
+! Шаблон Слоя 4 (Management Specs - SNMPv3 & Syslog)
+
+! Настройка протоколов обнаружения соседей
+{% if oob_management_lldp %}
+feature lldp
+{% else %}
+no feature lldp
+{% endif %}
+
+{% if oob_management_cdp %}
+feature cdp
+{% else %}
+no feature cdp
+{% endif %}
+
+! Конфигурация удаленного логирования Syslog
+{% if oob_syslog.enabled %}
+{% for server in oob_syslog.servers %}
+logging server {{ server }} {{ oob_syslog.severity_level }} use-vrf default
+{% endfor %}
+{% endif %}
+
+! Конфигурация протокола SNMPv3
+{% if oob_snmp.enabled %}
+snmp-server location "{{ oob_snmp.location }}"
+snmp-server contact "{{ oob_snmp.contact }}"
+
+! Создание учетных записей SNMPv3 с моделью безопасности AuthPriv
+{% for user in oob_snmp.v3_users %}
+snmp-server user {{ user.username }} {{ user.group }} auth {{ user.auth_protocol }} {{ user.auth_key }} priv {{ user.priv_protocol }} {{ user.priv_key }}
+{% endfor %}
+
+! Настройка получателей Trap-оповещений по SNMPv3
+{% if oob_snmp.traps.enabled %}
+snmp-server host {{ oob_snmp.traps.receiver }} filter-vlan all version 3 priv {{ oob_snmp.traps.username }}
+snmp-server enable traps link
+snmp-server enable traps entity
+{% endif %}
+{% endif %}
+```
+
+###### Слой 5: Слой политик качества обслуживания (QoS Specs)
+Слой политик качества обслуживания отвечает за классификацию и маркировку трафика с целью обеспечения предсказуемой задержки и гарантированной доставки критически важных пакетов. В рамках сети Out-of-Band (OoB) пропускная способность линков может быть небольшой, поэтому необходимо защитить трафик управления (SSH, HTTPS/NX-API, SNMPv3, Syslog) от вытеснения вторичным трафиком (например, тяжелыми дампами IPMI или логами).
+
+В соответствии со стандартами Cisco и рекомендациями RFC 4594, трафик сетевого управления маркируется значением CS6 (DSCP 48).
+
+Файл переменных `~/group_vars/oob_network_cisco_nexus/5_qos.yml`:
+```yaml
+---
+# =================================================================
+# СЛОЙ 5: ПОЛИТИКИ КАЧЕСТВА ОБСЛУЖИВАНИЯ СЕГМЕНТА OOB (QoS SPECS)
+# =================================================================
+
+oob_qos:
+  enabled: true
+  
+  # Название системных карт и политик
+  class_name: "cmapOOB:Management"
+  policy_name: "pmapOOB:ManagementInbound"
+  
+  # Определение портов и протоколов для классификации трафика управления
+  matching_rules:
+    - { seq: 10, protocol: "tcp", port: "eq 22" }    # SSH
+    - { seq: 20, protocol: "tcp", port: "eq 443" }   # NX-API / HTTPS
+    - { seq: 30, protocol: "udp", port: "eq 161" }   # SNMP
+    - { seq: 40, protocol: "udp", port: "eq 514" }   # Syslog
+
+  # Целевой маркер для защищаемого класса трафика (CS6 / DSCP 48)
+  target_dscp: "cs6"
+```
+
+и шаблон Jinja (`~/roles/fabric_generator/templates/cisco_nxos/5_qos.j2`):
+```jinja
+! Шаблон Слоя 5 (QoS Specs)
+{% if oob_qos.enabled %}
+
+! 1. Создание списка классификации трафика
+ip access-list ACL_QOS_OOB_CLASSIFY
+{% for rule in oob_qos.matching_rules %}
+  {{ rule.seq }} permit {{ rule.protocol }} any any {{ rule.port }}
+{% endfor %}
+
+! 2. Привязка списка к карте классов (Class Map)
+class-map type qos match-any {{ oob_qos.class_name }}
+  match access-group name ACL_QOS_OOB_CLASSIFY
+
+! 3. Формирование карты политик и установка маркера DSCP
+policy-map type qos {{ oob_qos.policy_name }}
+  class {{ oob_qos.class_name }}
+    set dscp {{ oob_qos.target_dscp }}
+
+! 4. Глобальная активация политики на уровне системы (Inbound)
+system qos
+  service-policy type qos input {{ oob_qos.policy_name }}
+
+{% endif %}
+```
+
+Слой 5 формализован. В него заложены механизмы принудительного окрашивания управляющих пакетов в наивысший приоритет маршрутизации (CS6), что гарантирует стабильность сессий автоматизации Ansible даже при пиковых нагрузках на сеть OoB.
+
+###### Слой 6: Абстрактные структуры данных интерфейсов (Profile Specs)
+Этот слой выполняет роль декларативного «конструктора» профилей. Здесь мы описываем логику работы каждого типа соединения (какие механизмы безопасности, ограничения штормов и настройки STP на нем активируются).
+
+При этом в данном слое нет привязки к конкретным номерам физических портов. Это делает структуры данных полностью переиспользуемыми.
+
+Файл переменных `~/group_vars/oob_network_cisco_nexus/6_interface_structures.yml`:
+```yaml
+---
+# ================================================================= #
+# СЛОЙ 6: АБСТРАКТНЫЕ СТРУКТУРЫ ИНТЕРФЕЙСОВ OOB (PROFILE SPECS)     #
+# ================================================================= #
+
+# Системные идентификаторы VLAN для сетей управления сегмента Out-of-Band
+oob_vlans:
+  netmgmt:
+    id: 100
+    name: "OoB:NetMGMT"
+  frontend:
+    id: 101
+    name: "OoB:FrontendOoB"
+  backend:
+    id: 102
+    name: "OoB:BackendOoB"
+
+# Описание абстрактных профилей портов
+oob_interface_profiles:
+  
+  # 1. Динамический Access-профиль 
+  # Применяется к любым OoB VLAN через передачу target_oob_vlan_id и target_oob_vlan_name в рантайме
+  oob_dynamic_access_port:
+    description: "--- Access (VLAN {{ target_oob_vlan_id }}): connection to segment {{ target_oob_vlan_name }}"
+    mode: "access"
+    vlan: "{{ target_oob_vlan_id }}" # Динамическое назначение VLAN
+    spanning_tree: "portfast host" 
+    bpdu_guard: true
+    port_security:
+      enabled: true
+      violation: "restrict" # Генерирует Syslog/SNMP при нарушении
+    # Ссылаемся на лимиты защиты от флуда, определенные в Слое 3
+    storm_control_enabled: true
+    dhcp_snooping_trust: false
+    # Дополнение: защита от спуфинга IP/MAC (Best Practice для серверов/коммутаторов управления)
+    ip_source_guard_enabled: true
+    arp_inspection_trust: false
+
+  # 2. Профиль магистрального порта БЕЗ LACP (одиночный линк)
+  oob_trunk_single_port:
+    description: "--- Trunk (VLAN{{ oob_vlans.netmgmt.id }}): L2 Static Interswitch Link"
+    mode: "trunk"
+    # Автоматически собираем все ID из словаря oob_vlans через Jinja2 map()
+    allowed_vlans: "{{ oob_vlans.values() | map(attribute='id') | join(',') }}"
+    native_vlan: "{{ oob_vlans.netmgmt.id }}" 
+    spanning_tree: "normal" # Для транков STP должен быть в режиме normal / network (Bridge Assurance)
+    bpdu_guard: false # Рекомендация по безопасности: вместо BPDU Guard на транках между своими коммутаторами включают Root Guard
+    root_guard: true 
+    storm_control_enabled: false
+    dhcp_snooping_trust: true # Магистральные порты являются доверенными для DHCP Snooping
+    arp_inspection_trust: true # Если включен DAI, транки тоже должны быть trusted
+
+  # 3. Профиль магистрального порта С LACP (Для физического ЦОД)
+  oob_trunk_lacp_port:
+    description: "--- Trunk (VLAN{{ oob_vlans.netmgmt.id }}): L2 LACP Interswitch Link"
+    mode: "trunk"
+    allowed_vlans: "{{ oob_vlans.values() | map(attribute='id') | join(',') }}"
+    native_vlan: "{{ oob_vlans.netmgmt.id }}" 
+    lacp_mode: "active"          # Активация 802.3ad LACP
+    spanning_tree: "normal"
+    bpdu_guard: false
+    root_guard: true 
+    storm_control_enabled: false
+    dhcp_snooping_trust: true 
+    arp_inspection_trust: true
+```
+
+И шаблон `~/roles/fabric_generator/templates/cisco_nxos/6_interfaces.j2`:
+```jinja
+! =================================================================
+! СЛОЙ 8: ВЕНДОРСКИЙ ШАБЛОН ИНТЕРФЕЙСОВ И VLAN (CISCO NX-OS)
+! =================================================================
+
+! 1. Инициализация и создание всех VLAN сегмента Out-of-Band
+{% for vlan_key, vlan_data in oob_vlans.items() %}
+vlan {{ vlan_data.id }}
+  name {{ vlan_data.name }}
+{% endfor %}
+
+! Автоматическое включение LACP только при реальной необходимости
+{% set ns = namespace(need_lacp=false) %}
+{% if host_interfaces is defined %}
+  {% for intf in host_interfaces %}
+    {% if intf.channel_group is defined and oob_interface_profiles[intf.profile].lacp_mode is defined %}
+      {% set ns.need_lacp = true %}
+    {% endif %}
+  {% endfor %}
+{% endif %}
+{% if ns.need_lacp %}
+feature lacp
+{% endif %}
+
+! -----------------------------------------------------------------
+! 2. Генерация агрегированных интерфейсов (Port-Channels)
+! -----------------------------------------------------------------
+{% if host_port_channels is defined and host_port_channels | length > 0 %}
+{% for po in host_port_channels %}
+interface Port-channel{{ po.id }}
+  description {{ po.description }}
+  switchport
+  {% set profile = oob_interface_profiles[po.profile] %}
+  switchport mode {{ profile.mode }}
+  
+  {% if profile.mode == 'trunk' %}
+  switchport trunk allowed vlan {{ profile.allowed_vlans }}
+  switchport trunk native vlan {{ profile.native_vlan }}
+  {% endif %}
+  
+  {% if profile.dhcp_snooping_trust | default(false) %}
+  ip dhcp snooping trust
+  {% endif %}
+  {% if profile.arp_inspection_trust | default(false) %}
+  ip arp inspection trust
+  {% endif %}
+  no shutdown
+{% endfor %}
+{% endif %}
+
+! -----------------------------------------------------------------
+! 3. Генерация физических интерфейсов (Топология Host Specs)
+! -----------------------------------------------------------------
+{% if host_interfaces is defined %}
+{% for intf in host_interfaces %}
+interface {{ intf.name }}
+  switchport
+  
+  {# ОПРЕДЕЛЕНИЕ ДИНАМИЧЕСКОГО КОНТЕКСТА ДЛЯ ACCESS ПОРТОВ #}
+  {% if intf.profile == 'oob_dynamic_access_port' %}
+    {% set segment = intf.oob_segment | default('netmgmt') %}
+    {% set target_oob_vlan_id = oob_vlans[segment].id %}
+    {% set target_oob_vlan_name = oob_vlans[segment].name %}
+  {% endif %}
+
+  {# Рендеринг описания порта #}
+  {% if intf.profile == 'oob_dynamic_access_port' %}
+  description --- Access (VLAN {{ target_oob_vlan_id }}): connection to segment {{ target_oob_vlan_name }} | {{ intf.description }}
+  {% else %}
+  description {{ oob_interface_profiles[intf.profile].description | default('Managed by IaC') }} | {{ intf.description }}
+  {% endif %}
+
+  {# Загрузка параметров профиля с защитой от отсутствия профиля в словаре #}
+  {% set profile = oob_interface_profiles[intf.profile] | default(none) %}
+  {% if profile is none %}
+  ! КРИТИЧЕСКАЯ ОШИБКА: Профиль "{{ intf.profile }}" не найден в 6_interface_structures.yml для порта {{ intf.name }}
+  {% else %}
+  switchport mode {{ profile.mode }}
+  
+  {# Конфигурация L2 режима порта #}
+  {% if profile.mode == 'access' %}
+    {% if intf.profile == 'oob_dynamic_access_port' %}
+  switchport access vlan {{ target_oob_vlan_id }}
+    {% else %}
+  switchport access vlan {{ profile.vlan }}
+    {% endif %}
+  {% elif profile.mode == 'trunk' %}
+  switchport trunk allowed vlan {{ profile.allowed_vlans }}
+  switchport trunk native vlan {{ profile.native_vlan }}
+  {% endif %}
+  
+  {# Spanning Tree функции безопасности #}
+  {% if profile.spanning_tree is defined and profile.spanning_tree == 'portfast host' %}
+  spanning-tree portfast host
+  {% endif %}
+  {% if profile.bpdu_guard | default(false) %}
+  spanning-tree bpduguard enable
+  {% endif %}
+  {% if profile.root_guard | default(false) %}
+  spanning-tree guard root
+  {% endif %}
+
+  {# Port Security (Защита уровней MAC) #}
+  {% if profile.port_security is defined and profile.port_security.enabled | default(false) %}
+  switchport port-security
+  switchport port-security violation {{ profile.port_security.violation | default('restrict') }}
+  {% endif %}
+
+  {# IP Source Guard & DAI (Защита от IP/MAC спуфинга) #}
+  {% if profile.ip_source_guard_enabled | default(false) %}
+  ip verify source tracking
+  {% endif %}
+
+  {# Защита от лавинного флуда (Storm Control) на базе данных Слоя 3 #}
+  {% if profile.storm_control_enabled | default(false) and oob_security_storm_control is defined %}
+  storm-control broadcast level {{ oob_security_storm_control.broadcast_level_percent }}
+  storm-control multicast level {{ oob_security_storm_control.multicast_level_percent }}
+  storm-control action shutdown
+  {% endif %}
+
+  {# Привязка к Port-Channel агрегату (Только если в профиле задан режим LACP) #}
+  {% if intf.channel_group is defined and profile.lacp_mode is defined %}
+  channel-group {{ intf.channel_group }} mode {{ profile.lacp_mode }}
+  {% endif %}
+  
+  {# Доверие протоколам динамической безопасности (DHCP Snooping / DAI) #}
+  {% if profile.dhcp_snooping_trust | default(false) %}
+  ip dhcp snooping trust
+  {% endif %}
+  {% if profile.arp_inspection_trust | default(false) %}
+  ip arp inspection trust
+  {% endif %}
+  {% endif %}
+  no shutdown
+{% endfor %}
+{% endif %}
+
+! -----------------------------------------------------------------
+! 4. АВТОМАТИЧЕСКОЕ ОТКЛЮЧЕНИЕ НЕИСПОЛЬЗУЕМЫХ ПОРТОВ
+! -----------------------------------------------------------------
+{% if oob_shutdown_unused_ports | default(true) %}
+{% set active_ports = [] %}
+{% if host_interfaces is defined %}
+  {% for intf in host_interfaces %}
+    {% set _ = active_ports.append(intf.name) %}
+  {% endfor %}
+{% endif %}
+{% for port_num in range(1, 49) %}
+{% set current_port = 'Ethernet1/' ~ port_num %}
+{% if current_port not in active_ports %}
+interface {{ current_port }}
+  description --- UNUSED PORT: SHUTDOWN ---
+  switchport mode access
+  switchport access vlan {{ oob_vlans.netmgmt.id }}
+  shutdown
+  spanning-tree bpduguard enable
+{% endif %}
+{% endfor %}
+{% endif %}
+
+! -----------------------------------------------------------------
+! 5. Настройка Терминации L3 интерфейсов управления (SVI)
+! -----------------------------------------------------------------
+interface Vlan{{ oob_vlans.netmgmt.id }}
+  description OoB_Management_L3_Interface
+  no shutdown
+  {% if oob_role == 'collapsed_core' %}
+  ip address {{ oob_vlan_ip_address }}
+  {% elif oob_role == 'access' %}
+  ip address {{ inventory_hostname }}/24
+  ip route 0.0.0.0/0 {{ oob_default_gateway }}
+  {% endif %}
+```
+
+Использование изолирующего VLAN 999 (обычно называемого Dummy VLAN или Dead VLAN) для выключенных портов — это фундаментальное требование информационной безопасности (Best Practice) при проектировании корпоративных сетей и ЦОД.
+Вот почему неиспользуемые порты нельзя оставлять в вашем рабочем VLAN 100, даже если они находятся в состоянии shutdown:
+1. **Защита от случайной коммутации (Человеческий фактор)**: Если дежурный инженер или техник в серверной ошибочно воткнет кабель от нового сервера или стороннего устройства в физический порт, который административно выключен (shutdown), а затем этот порт случайно или намеренно включат из CLI, устройство мгновенно окажется в вашей критически важной сети управления `VLAN 100`. Если же порт предварительно переведен в несуществующий `VLAN 999`, устройство физически останется в изолированном «вакууме» и не сможет перехватить трафик или устроить атаку, пока администратор осознанно не переведет порт в нужный сегмент.
+2. **Изоляция бродкаст-домена управления**: Сеть управления `VLAN 100` должна быть максимально «чистой». Нахождение портов в дефолтном состоянии или в рабочей VLAN (даже при shutdown) в некоторых реализациях сетевых ОС может вызывать утечку системных кадров или некорректную обработку таблиц MAC-адресов. Перевод в «мертвый» `VLAN 999` гарантирует, что неиспользуемый порт аппаратно отрезан от рабочей сети на уровне ASIC-чипа коммутатора.
+3. Требования SOC и ИБ (Для защиты диплома): В академической и промышленной практике явный перевод неиспользуемых интерфейсов в изолированный VLAN, отличный от сети управления и данных, является обязательным пунктом раздела «Информационная безопасность» сетевого проекта.
+
+###### Слой 7: Слой топологии интерфейсов (Host Specs)
+Этот слой создается в виде отдельных файлов для каждого конкретного IP-адреса коммутатора в каталоге `~/host_vars/`. Здесь описывается только физическая коммутация: какой порт куда подключен и какой логический профиль из Слоя 6 на него накладывается.
+
+Фокусируемся на коммутаторе swOoBAccess02 (10.1.100.2), на котором я остановился в предыдущей главе. Файл топологии коммутатора доступа `~/host_vars/10.1.100.2.yml` имеет следующий вид:
+```yaml
+---
+dev_hostname: "swOoBAccess02"
+oob_role: "access"
+oob_default_gateway: "10.1.100.254"
+
+host_interfaces:
+  # Подключения к OoB-интерфесам фабрики
+  - name: "Ethernet1/1"
+    description: "Access (VLAN102): connection to OoB interface of swBESpine01:MGMT1"
+    profile: "oob_dynamic_access_port"
+    oob_segment: "backend"
+
+  - name: "Ethernet1/2"
+    description: "Access (VLAN102): connection to OoB interface of swBESpine02:MGMT1"
+    profile: "oob_dynamic_access_port"
+    oob_segment: "backend"
+
+  # Одиночный статический транк-аплинк в ядро
+  - name: "Ethernet1/7"
+    description: "Trunk (VLAN100): connection to swOoBCCore01:Eth1/2"
+    profile: "oob_trunk_single_port"
+```
+
+Необходим мастер-шаблон (`~/templates/oob_nxos_master.j2`), который будет последовательно включать в себя все разработанные нами ранее изолированные слои, формируя итоговый монолитный конфигурационный файл для Cisco NX-OS.
+```jinja
+! =================================================================
+! ЦЕЛЕВАЯ КОНФИГУРАЦИЯ СЕТИ OOB MANAGEMENT (CISCO NX-OS)
+! =================================================================
+hostname {{ dev_hostname | default(inventory_hostname) }}
+cli alias name wr copy running-config startup-config
+
+! Включаем системную фичу VLAN-интерфейсов сразу
+feature interface-vlan
+
+! --- ШАГ 1: ГЛОБАЛЬНЫЕ СИСТЕМНЫЕ НАСТРОЙКИ ---
+{% include 'roles/fabric_generator/templates/cisco_nxos/1_common.j2' %}
+
+! --- ШАГ 2: ПОЛИТИКИ AAA ---
+{% include 'roles/fabric_generator/templates/cisco_nxos/2_aaa.j2' %}
+
+! --- ШАГ 3: БЕЗОПАСНОСТЬ (Глобальный DHCP Snooping включится ТУТ) ---
+{% include 'roles/fabric_generator/templates/cisco_nxos/3_security.j2' %}
+
+! --- ШАГ 4: МОНИТОРИНГ И ТЕЛЕМЕТРИЯ ---
+{% include 'roles/fabric_generator/templates/cisco_nxos/4_management.j2' %}
+
+! --- ШАГ 5: ПОЛИТИКИ КАЧЕСТВА ОБСЛУЖИВАНИЯ (QoS) ---
+{% include 'roles/fabric_generator/templates/cisco_nxos/5_qos.j2' %}
+
+! --- ШАГ 6: ИНТЕРФЕЙСЫ И ТОПОЛОГИЯ ХОСТА ---
+! (Теперь порты безболезненно примут команды "ip verify source tracking")
+{% include 'roles/fabric_generator/templates/cisco_nxos/6_interfaces.j2' %}
+
+end
+```
+
+Далее `~/deploy_oob_network.yml`:
+```yaml
+---
+- name: "Генерация и деплой золотого стандарта конфигурации сети OoB"
+  hosts: oob_network_cisco_nexus
+  gather_facts: false
+  serial: 1
+  collections:
+    - cisco.nxos
+
+  tasks:
+    - name: "Создание локальной директории для скомпилированных конфигов"
+      file:
+        path: "compiled_configs"
+        state: directory
+      delegate_to: localhost
+      run_once: true
+
+    - name: "Компиляция финального файла настроек (Jinja2 Рендеринг)"
+      template:
+        src: "templates/oob_nxos_master.j2"
+        dest: "compiled_configs/{{ dev_hostname | default(inventory_hostname) }}_intended.cfg"
+      delegate_to: localhost
+
+    - name: "ПРИМЕНЕНИЕ КОНФИГУРАЦИИ НА КОММУТАТОР (NX-API HTTPAPI)"
+      cisco.nxos.nxos_config:
+        src: "compiled_configs/{{ dev_hostname | default(inventory_hostname) }}_intended.cfg"
+      register: config_result
+
+    - name: "Финальный отчет по устройству"
+      debug:
+        msg: 
+          - "=================================================="
+          - "Коммутатор:   {{ dev_hostname | default(inventory_hostname) }}"
+          - "Статус деплоя: УСПЕШНО"
+          - "Изменения:     {{ config_result.changed }}"
+          - "Файл конфига:  compiled_configs/{{ dev_hostname | default(inventory_hostname) }}_intended.cfg"
+          - "=================================================="
+```
+
+
+
+Чтобы не затрагивать остальные коммутаторы (для них я еще не сделал топологии), можно запустить плейбук деплоя с флагом ограничения --limit (или -l). Это заставит Ansible отработать шаблоны исключительно для нужного IP-адреса:
+```bash
+(ansible-venv) window@srvoobservice01:~$ ansible-playbook -i inventory.ini deploy_oob_network.yml --limit 10.1.100.2
+
+PLAY [Генерация и деплой золотого стандарта конфигурации сети OoB (Нативный сетевой метод)] ***
+
+TASK [Gathering Facts] *********************************************************
+ok: [10.1.100.2]
+
+TASK [Создание локальной директории для скомпилированных конфигов] *************
+ok: [10.1.100.2 -> localhost]
+
+TASK [Компиляция финального файла настроек (Jinja2 Рендеринг)] *****************
+ok: [10.1.100.2 -> localhost]
+
+TASK [ВРЕМЕННОЕ СНЯТИЕ ACL С ЛИНИЙ VTY ДЛЯ ОБХОДА БЛОКИРОВКИ ЯДРА] *************
+ok: [10.1.100.2]
+
+TASK [ПРЯМАЯ НАКАТКА КОНФИГУРАЦИИ ЧЕРЕЗ СЕТЕВОЙ ДВИЖОК ANSIBLE (SRC METHOD)] ***
+[WARNING]: To ensure idempotency and correct diff the input configuration lines should be similar to how they appear if present in the running configuration on device including the indentation
+changed: [10.1.100.2]
+
+TASK [Финальный отчет по устройству] *******************************************
+ok: [10.1.100.2] => {
+    "msg": [
+        "==================================================",
+        "Коммутатор:   swOoBAccess02",
+        "Статус деплоя: УСПЕШНО ВЫПОЛНЕНО НАПРЯМУЮ В RUNNING",
+        "Изменения:     True",
+        "=================================================="
+    ]
+}
+
+PLAY RECAP *********************************************************************
+10.1.100.2                 : ok=6    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0 
+```
+
+> Полученное предупреждение означает, что формат файла конфигурации, который был отправлен на устройство через метод src, не совсем совпадает с тем, как этот же конфиг хранится в памяти самого устройства.
+
+В ходе отладки, я получил ошибку я столкнулся с рядом проблем.
+
+На этапе заливки сработал тайм-аут (`command timeout triggered, timeout value is 30 secs`), хотя шаблон честно сгенерировал конфигурацию для всех 48 портов. Когда Ansible передавал текстовый блок из более чем 300 строк, виртуальный коммутатор, обрабатывая их последовательно, грузит свой виртуальный CPU, не успевая применить всё за дефолтные 30 секунд, в результате чего Ansible разрвал сессию по тайм-ауту.
+
+Для митигации этого я увеличил тайм-ауты в `~/ansible.cfg` - для тяжелых сетевых конфигураций и виртуальных лабораторий дефолтных 30 секунд мало. В общем виде файл конфигурации окончательно получил следующий вид:
+```cfg
+[persistent_connection]
+# Время ожидания ответа на команду (поднимаем до 5 минут)
+command_timeout = 300
+
+# Время жизни самой сессии подключения
+connect_timeout = 300
+```
+
+Кроме того были проблемы с передачей аксесс-листа: коммутатор игнорировал переход в его контекст и пытался записать правила в контексте глобальной конфигурации.
 
 
 
 
+
+templates/oob_nxos_master.j2
+```
+! =================================================================
+! ЦЕЛЕВАЯ КОНФИГУРАЦИЯ СЕТИ OOB MANAGEMENT (CISCO NX-OS)
+! =================================================================
+hostname {{ dev_hostname | default(inventory_hostname) }}
+cli alias name wr copy running-config startup-config
+
+! Сначала включаем L3 интерфейсы
+feature interface-vlan
+
+! СЛОЙ 1: СИСТЕМНЫЕ НАСТРОЙКИ
+{% include 'roles/fabric_generator/templates/cisco_nxos/1_common.j2' %}
+
+! СЛОЙ 2: AAA ПОЛИТИКИ
+{% include 'roles/fabric_generator/templates/cisco_nxos/2_aaa.j2' %}
+
+! СЛОЙ 3: БЕЗОПАСНОСТЬ (DHCP Snooping включится ТУТ)
+{% include 'roles/fabric_generator/templates/cisco_nxos/3_security.j2' %}
+
+! СЛОЙ 4: МОНИТОРИНГ
+{% include 'roles/fabric_generator/templates/cisco_nxos/4_management.j2' %}
+
+! СЛОЙ 5: QOS
+{% include 'roles/fabric_generator/templates/cisco_nxos/5_qos.j2' %}
+
+! СЛОЙ 6 и 8: ИНТЕРФЕЙСЫ (Теперь порты успешно примут команды безопасности)
+{% include 'roles/fabric_generator/templates/cisco_nxos/6_interfaces.j2' %}
+
+end
+```
+
+---
+
+```bash
+(ansible-venv) window@srvoobservice01:~$ ansible-playbook -i inventory.ini deploy_oob_network.yml --limit 10.1.100.2
+
+PLAY [Генерация и деплой золотого стандарта конфигурации сети OoB] *************
+
+TASK [Создание локальной директории для скомпилированных конфигов] *************
+changed: [10.1.100.2 -> localhost]
+
+TASK [Компиляция финального файла настроек (Jinja2 Рендеринг)] *****************
+changed: [10.1.100.2 -> localhost]
+
+TASK [КОПИРОВАНИЕ КОНФИГУРАЦИИ В BOOTFLASH КОММУТАТОРA (SFTP/SCP)] *************
+changed: [10.1.100.2]
+
+TASK [НАСИЛЬСТВЕННАЯ ЗАМЕНА КОНФИГУРАЦИИ (REPLACE DEPLOYMENT)] *****************
+changed: [10.1.100.2]
+
+TASK [Финальный отчет по устройству] *******************************************
+ok: [10.1.100.2] => {
+    "msg": [
+        "==================================================",
+        "Коммутатор:   swOoBAccess02",
+        "Статус деплоя: УСПЕШНО ВЫПОЛНЕНО ЧЕРЕЗ REPLACE",
+        "Изменения:     True",
+        "Файл конфига:  intended_config.cfg в bootflash:",
+        "=================================================="
+    ]
+}
+
+PLAY RECAP *********************************************************************
+10.1.100.2                 : ok=5    changed=4    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0 
+```
+
+
+
+
+
+---
+
+Копирование файла в bootflash: прошло успешно, но встроенный в Cisco NX-OS механизм предварительной проверки (Pre-check для config replace) отклонил файл конфигурации.
+Для проведения безопасной атомарной замены (config replace) операционная система Nexus требует наличия в текстовом файле трех обязательных системных элементов:
+1. Строки с указанием версии операционной системы (команда version X.X).
+2. Объявления дефолтного VLAN 1 (vlan 1).
+3. Наличия в конфигурации пользователя admin для SNMP-сервера (snmp-server user admin ...), так как этого требует архитектура безопасности ядра NX-OS.
+Без этих трех маркеров ОС считает файл «неполным» и прерывает транзакцию, чтобы инженер случайно не превратил коммутатор в кирпич.
 
 
 ----
+
+grep -rn "cat << 'EOF'" roles/fabric_generator/templates/cisco_nxos/
+
+ssh-keygen -f "/home/window/.ssh/known_hosts" -R "10.1.100.2"
+
+cmdline recoverymode=1
 
 ansible-galaxy collection install arista.avd
 ansible-galaxy collection install arista.eos
@@ -2233,3 +3218,271 @@ Oct 24 17:17:33 localhost ZeroTouch: %ZTP-6-DHCPv4_SUCCESS: DHCPv4 response rece
 Oct 24 17:17:38 localhost ZeroTouch: %ZTP-6-CONFIG_DOWNLOAD: Attempting to download the startup-config from http://10.1.100.250/arista_ztp.py
 Oct 24 17:17:38 localhost ZeroTouch: %ZTP-4-CONFIG_DOWNLOAD_FAIL: Failed to download the startup-config from http://10.1.100.250/arista_ztp.py. Error: HTTP response code said error
 ```
+
+```
+switch# sh run
+
+!Command: show running-config
+!No configuration change since last restart
+!Time: Sat Oct 31 07:50:41 2026
+
+version 10.5(2) Bios:version
+vdc switch id 1
+  limit-resource vlan minimum 16 maximum 4094
+  limit-resource vrf minimum 2 maximum 4096
+  limit-resource port-channel minimum 0 maximum 511
+  limit-resource m4route-mem minimum 58 maximum 58
+  limit-resource m6route-mem minimum 8 maximum 8
+feature nxapi
+feature scp-server
+feature interface-vlan
+feature lldp
+
+username admin password 5 $5$B8F6h8rq5.Z8wpBX$ee6v0E6k/vXirVjz0okTlIr86geW1ehSP5
+lQ6E.pAQ6  role network-admin
+ip domain-lookup
+copp profile strict
+
+vlan 1,100
+vlan 100
+  name NetMGMT
+
+vrf context management
+nxapi http port 80
+
+
+interface Vlan1
+
+interface Vlan100
+  no shutdown
+  ip address dhcp
+
+interface mgmt0
+  vrf member management
+line console
+line vty
+```
+
+---
+
+(ansible-venv) window@srvoobservice01:~$ scp compiled_configs/swOoBAccess02_intended.cfg ansible@10.1.100.2:bootflash:/manual_intended_config.cfg
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+User Access Verification
+(ansible@10.1.100.2) Password: 
+subsystem request failed on channel 0
+scp: Connection closed
+(ansible-venv) window@srvoobservice01:~$ scp -O compiled_configs/swOoBAccess02_intended.cfg ansible@10.1.100.2:bootflash:/manual_intended_config.cfg
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+User Access Verification
+(ansible@10.1.100.2) Password: 
+swOoBAccess02_intended.cfg                    100%   12KB 186.1KB/s   00:00 
+
+
+
+
+
+swOoBAccess02# dir bootflash:/manual_intended_config.cfg
+      12160    Nov 01 10:56:42 2026  manual_intended_config.cfg
+
+Usage for bootflash://sup-local
+ 2996854784 bytes used
+ 5602246656 bytes free
+ 8599101440 bytes total
+
+
+
+
+
+
+ Похоже, в этой версии Cisco NX-OS синтаксис команды rollback немного отличается: ключевого слова check в конце строки нет, а вместо него система предлагает выбрать режим выполнения транзакции: atomic, best-effort, stop-at-first-failure или verbose.
+Для безопасного выполнения ручной замены и вывода всех потенциальных ошибок на экран, запустите команду с флагами atomic verbose:
+cisco
+rollback running-config file bootflash:/manual_intended_config.cfg atomic verbose
+Используйте код с осторожностью.
+
+Что сделают эти флаги:
+
+• atomic — заставит коммутатор выполнять замену как единую транзакцию. Если хоть одна строчка вызовет критическую ошибку, NX-OS полностью откатит все изменения назад, предотвратив появление «каши» в конфигурации.
+• verbose — заставит парсер выводить в консоль каждую применяемую или удаляемую строчку в реальном времени.
+Запустите команду с флагами atomic verbose. Если на каком-то этапе накат прервется, пришлите финальные строки вывода с ошибкой — это покажет точное место логического сбоя.
+
+
+swOoBAccess02# rollback running-config file bootflash:/manual_intended_config.cfg atomic verbose
+ADVISORY: Rollback operation started...
+Modifying running configuration from another VSH terminal in parallel
+is not recommended, as this may lead to Rollback failure.
+
+ERROR: Rollback patch computation failed due to the following reason(s)
+The checkpoint file was not created using checkpoint CLI
+
+
+
+
+Команда rollback running-config file ... в операционной системе Cisco Nexus спроектирована исключительно для работы с файлами чекпоинтов (checkpoints), а не с обычными текстовыми (ASCII) файлами конфигурации, которые генерирует Ansible или Jinja2.
+Когда парсер NX-OS считывает ваш файл, он ищет в самом его начале специальный скрытый системный маркер (метаданные), который коммутатор автоматически проставляет при выполнении команды checkpoint file .... Если этой строки на самом верху файла нет, парсер выкидывает ошибку:
+The checkpoint file was not created using checkpoint CLI.
+
+💡 Как заставить коммутатор принять этот файл? (Хак с магическим заголовком)
+
+Чтобы обмануть валидатор NX-OS и заставить его обработать ваш плоский ASCII-конфиг как легитимный чекпоинт для полной замены конфигурации (Replace), в файле обязана присутствовать магическая сервисная строка.
+
+
+swOoBAccess02# rollback running-config file bootflash:/manual_intended_config.cfg atomic verbose
+ADVISORY: Rollback operation started...
+Modifying running configuration from another VSH terminal in parallel
+is not recommended, as this may lead to Rollback failure.
+
+Collecting Running-Config
+Generating Rollback patch for switch profile
+Rollback Patch is Empty
+Collecting Running-Config
+Generating Rollback Patch
+Executing Rollback Patch
+During CR operation,will retain L3 configuration
+when vrf member change on interface
+========================================================
+
+`config t `
+
+`no logging console`
+
+`no logging module`
+
+`no logging monitor`
+
+`no logging logfile messages 5 size 4194304`
+
+`priority-flow-control override-interface mode off`
+
+`no xml server timeout 1200`
+
+`no boot nxos bootflash:/nxos64-cs.10.5.2.F.bin`
+
+`no line vty`
+
+`no line console`
+
+`no icam monitor scale`
+
+`interface Ethernet1/48`
+
+`no switchport trunk allowed vlan`
+
+`no shutdown`
+
+`exit`
+
+...
+
+`no role name priv-0`
+ERROR: Cannot unconfigure system defined role "priv-0"
+========================================================
+Patch execution failed, please check 'show config-replace log exec'
+Verification failed, Rolling back to previous configuration
+Collecting Running-Config
+Cleaning up switch-profile buffer
+Generating Rollback patch for switch profile
+Executing Rollback patch for switch profiles. WARNING - This will change the configuration of switch profiles and will also affect any peers if configured
+Collecting Running-Config
+Generating Rollback Patch
+Executing Rollback Patch
+During CR operation,will retain L3 configuration
+when vrf member change on interface
+========================================================
+
+`config t `
+
+`no password strength-check`
+
+`username admin role network-operator`
+
+`username snmp-monitoring password 5 $5$BFMOHG$k9Dp0NZ4dhhevdXOodc2LLWkl7dANrULMIbZ/lJJn63 role network-operator`
+
+`username snmp-monitoring passphrase lifetime 99999 warntime 14 gracetime 3`
+
+`ip name-server 10.1.100.254 8.8.8.8`
+
+`crypto key generate rsa label swOoBAccess02 modulus 4096`
+
+`ip access-list aclOoB:QoSClassify`
+
+`10 permit tcp any any eq 22`
+
+`20 permit tcp any any eq 443`
+
+`30 permit udp any any eq snmp`
+
+`40 permit udp any any eq syslog`
+
+`ip access-list aclVTYInboundAccess`
+
+`30 permit udp 10.1.100.242/24 any eq snmp`
+
+`snmp-server user admin network-operator`
+
+...
+
+`boot nxos bootflash:/nxos64-cs.10.5.2.F.bin`
+.............Performing image verification and compatibility check, please wait....
+
+`logging logfile messages 5 size 4194304`
+
+`exit`
+========================================================
+Generating Running-config for verification
+Generating Rollback Patch
+Rollback Patch is Empty
+Rolling back to previous configuration is successful
+
+Rollback failed. Use 'show rollback log verify' or 'show rollback log exec' to see reasons for failure
+
+
+
+
+
+swOoBAccess02# show rollback log verify
+Operation            : Rollback to Checkpoint File
+Checkpoint file name : /manual_intended_config.cfg
+Scheme               : bootflash
+Rollback done By     : admin
+Rollback mode        : atomic
+Verbose              : enabled
+Start Time           : Sun, 11:01:11 01 Nov 2026
+Start Time UTC       : Sun, 08:01:11 01 Nov 2026
+
+End Time             : Sun, 11:02:07 01 Nov 2026
+End Time UTC         : Sun, 08:02:07 01 Nov 2026
+Status               : Patch Execution Failed
+
+
+Undo Log
+--------------------------------------------------------------------------------
+End Time             : Sun, 11:04:31 01 Nov 2026
+End Time UTC         : Sun, 08:04:31 01 Nov 2026
+Status               : Success
+
+
+
+
+
+
+Очистка лога rollback
+
+
+checkpoint clear_log_tmp
+rollback running-config checkpoint clear_log_tmp atomic
+no checkpoint clear_log_tmp
+
+Если вы вообще не укажете ничего в конце строки (ни local, ни none), NX-OS автоматически применит скрытое дефолтное правило:
+1. Опрашивать группу grpTACACS01.
+2. Если она недоступна — опрашивать grpRADIUS01.
+3. Если все серверы недоступны (unreachable) — коммутатор автоматически откатится на локальную базу данных (local) и потребует ваш надежный пароль P@$$w0rd!
+Слово none указывать в конце строки категорически нельзя, иначе этот защитный механизм перезаписывается полным отключением авторизации.
+
+
+
+
