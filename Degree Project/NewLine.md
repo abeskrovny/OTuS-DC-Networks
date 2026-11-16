@@ -60,31 +60,26 @@ _Таблица 1.2 — Разделение зон ответственност
 3. Запускается конвейер CI/CD. Оркестратор автоматизации извлекает актуальные шаблоны конфигураций из репозитория Git и запрашивает полный контекст параметров целевого устройства через API NetBox (динамическая инвентаризация).
 4. На основе полученных данных генерируется итоговая конфигурация, выполняется ее синтаксическая проверка и доставка на сетевое оборудование.
 
-1.4.2. Git-центричная модель с экспортом состояния (Strict GitOps)
-
+### 1.4.2. Git-центричная модель с экспортом состояния (Strict GitOps)
 Данный подход обеспечивает максимальный уровень контроля за счет обязательного прохождения всех изменений через процедуру Pull Request в Git:
 1. Инженер вносит планируемые изменения в NetBox, присваивая объектам статус Planned (запланировано).
 2. Специализированный сервис синхронизации (например, плагин экспорта или скрипт опроса API) выгружает измененные сущности из NetBox в сериализованном виде (YAML/JSON) в отдельную ветку Git-репозитория и автоматически формирует Pull Request.
 3. В рамках Pull Request запускается конвейер валидации: проверяется синтаксис, выполняется статический анализ таблиц маршрутизации и безопасности (с помощью инструментов класса Batfish), а также проводится эмуляция развертывания в цифровом двойнике сети (например, Containerlab).
 4. После успешного прохождения всех тестов и одобрения запроса ответственным архитектором изменения сливаются в главную ветку (main). Оркестратор применяет конфигурацию на реальном оборудовании, проверяет операционное состояние сети и обновляет статус объектов в NetBox на Active.
 
-1.5. Особенности и ограничения применения GitOps в сетевом домене
-
+## 1.5. Особенности и ограничения применения GitOps в сетевом домене
 Перенос методологии GitOps из области облачных вычислений и контейнеризации (Kubernetes) в сферу классических сетей передачи данных сопряжен с рядом технологических особенностей, которые необходимо учитывать при проектировании системы:
-• Модель доставки Push против Pull. В классическом GitOps программный агент работает непосредственно внутри целевой среды и самостоятельно забирает обновления из репозитория (Pull-модель). Сетевые коммутаторы и маршрутизаторы в большинстве случаев имеют закрытую архитектуру ОС, не позволяющую разворачивать сторонних агентов. Вследствие этого в NetGitOps преобладает Push-модель, при которой внешний исполнитель (Runner) системы CI/CD инициирует подключение к устройствам по протоколам NETCONF, RESTCONF, gNMI или SSH.
-• Аппаратная и программная гетерогенность. Корпоративные сети часто строятся на оборудовании различных производителей (Cisco, Juniper, Huawei, Eltex, MikroTik), использующих несовместимый синтаксис командной строки. Для преодоления данной проблемы применяются абстрактные модели данных (OpenConfig) и многоуровневая шаблонизация, преобразующая единые переменные из NetBox в вендорозависимые инструкции.
-• Транзакционность и сохранение состояния (Stateful-природа). В отличие от stateless-контейнеров, которые можно перезапустить при ошибке, сетевое устройство поддерживает активные сессии маршрутизации и коммутации в реальном времени. Применение некорректной конфигурации способно привести к потере управления устройством (Management Lockout). Поэтому обязательным требованием к инструментам доставки является поддержка транзакций и автоматического отката (механизм commit confirmed), возвращающего устройство к исходному состоянию при потере связи с оркестратором.
+- **Модель доставки Push против Pull**. В классическом GitOps программный агент работает непосредственно внутри целевой среды и самостоятельно забирает обновления из репозитория (Pull-модель). Сетевые коммутаторы и маршрутизаторы в большинстве случаев имеют закрытую архитектуру ОС, не позволяющую разворачивать сторонних агентов. Вследствие этого в NetGitOps преобладает Push-модель, при которой внешний исполнитель (Runner) системы CI/CD инициирует подключение к устройствам по протоколам NETCONF, RESTCONF, gNMI или SSH.
+- **Аппаратная и программная гетерогенность**. Корпоративные сети часто строятся на оборудовании различных производителей (Cisco, Juniper, Huawei, Eltex, MikroTik), использующих несовместимый синтаксис командной строки. Для преодоления данной проблемы применяются абстрактные модели данных (OpenConfig) и многоуровневая шаблонизация, преобразующая единые переменные из NetBox в вендорозависимые инструкции.
+- **Транзакционность и сохранение состояния (Stateful-природа)**. В отличие от stateless-контейнеров, которые можно перезапустить при ошибке, сетевое устройство поддерживает активные сессии маршрутизации и коммутации в реальном времени. Применение некорректной конфигурации способно привести к потере управления устройством (Management Lockout). Поэтому обязательным требованием к инструментам доставки является поддержка транзакций и автоматического отката (механизм `commit confirmed`), возвращающего устройство к исходному состоянию при потере связи с оркестратором.
 
-Выводы по главе 1
-
+## 1.6. Выводы
 1. Классический императивный подход к управлению сетевым оборудованием через CLI не отвечает современным требованиям надежности, масштабируемости и скорости внесения изменений.
 2. Внедрение парадигмы NetGitOps позволяет перевести управление сетью на инженерные практики разработки ПО, обеспечивая декларативность, версионирование, автоматическое тестирование и защиту от дрейфа конфигураций.
-3. Оптимальной архитектурой хранения эталонных данных является модель Split Source of Truth, в которой NetBox обеспечивает реляционную целостность топологических и адресных данных (DCIM/IPAM), а Git отвечает за версионирование шаблонов, сетевых политик и кода автоматизации.
+3. Оптимальной архитектурой хранения эталонных данных является модель **Split Source of Truth**, в которой NetBox обеспечивает реляционную целостность топологических и адресных данных (DCIM/IPAM), а Git отвечает за версионирование шаблонов, сетевых политик и кода автоматизации.
 4. Успешная реализация NetGitOps требует учета специфики сетевого оборудования, включая использование Push-модели доставки, поддержку транзакционных протоколов управления и предварительную валидацию конфигураций в цифровых двойниках.
 
-
-1. Выбор Git-платформы: GitLab против GitHub
-
+## 1.7 Выбор Git-платформы: GitLab против GitHub
 В контексте сетевого оборудования выбор между GitLab и GitHub упирается в архитектуру сети и доступность ресурсов извне.
 
 Критерий сравнения	GitLab (Self-Hosted / On-Premise)	GitHub (Cloud)
@@ -131,6 +126,370 @@ _Таблица 1.2 — Разделение зон ответственност
 2. Этот токен сохраняется в GitLab CI Variables под именем NETBOX_TOKEN.
 3. В NetBox настраивается Webhook (раздел Operations -> Webhooks), который отслеживает события создания, изменения или удаления (Create, Update, Delete) для ключевых моделей (Devices, Interfaces, IP Addresses, VLANs).
 4. При любом изменении NetBox отправляет POST-запрос на специальный URL-триггер в GitLab (https://gitlab.local{id}/trigger/pipeline), передавая токен запуска и JSON с информацией о том, какое именно устройство изменилось.
+
+---
+
+OpenBao — это открытый (open-source) и управляемый сообществом под эгидой Linux Foundation (OpenSSF) инструмент для безопасного управления секретами, сертификатами и ключами. Он представляет собой форк HashiCorp Vault, созданный для обеспечения независимого развития под лицензией MPL 2.0.
+
+
+сновные возможности
+
+• Безопасное хранение секретов: Шифрование данных в покое (включая key-value хранилища, диски, PostgreSQL или Consul).
+• Динамические секреты: Генерация временных учетных данных (например, для баз данных или облачных провайдеров) с автоматическим отзывом по истечении срока аренды (lease).
+• Шифрование как сервис (Encryption-as-a-Service): Шифрование и дешифрование данных через API без необходимости их постоянного сохранения в самом хранилище.
+• Управление доступом: Аутентификация через различные провайдеры (GitHub, LDAP, AppRole, Kubernetes Service Accounts) и гибкая политика разграничения прав на основе путей (path-based policies).
+• Совместимость с Vault API: Проект сохраняет высокую степень API-совместимости с HashiCorp Vault.
+
+Официальный сайт проекта доступен по адресу [OpenBao](https://openbao.org/), а исходный код размещен на [GitHub - OpenBao](https://github.com/openbao/openbao). Неплохая обзорная статья на [Хабре](https://habr.com/ru/articles/923672/)
+
+Интеграция с MS-AD и прочим
+
+---
+
+Весь пайплайн?
+
+
+---
+
+NetBox работает под Docker, поэтому необходимо его установить:
+```bash
+sudo apt install -y docker.io docker-compose-v2
+```
+
+```
+window@srvOoBService01:/opt/netbox-docker$ docker -v
+Docker version 29.1.3, build 29.1.3-0ubuntu4.1
+```
+
+---
+
+
+Установка NetBox (через Docker)
+
+Использование официального репозитория netbox-docker — самый надежный способ быстро поднять актуальную версию NetBox со всеми зависимостями (PostgreSQL, Redis, worker).
+
+Клонирование репозитория. Перейдите в рабочую директорию (например, /opt) и скачайте релизную ветку:
+```bash
+window@srvOoBService01:/opt$ cd /opt/
+
+window@srvOoBService01:/opt$ sudo git clone -b release https://github.com/netbox-community/netbox-docker.git
+cd netbox-docker
+Cloning into 'netbox-docker'...
+remote: Enumerating objects: 5991, done.
+remote: Counting objects: 100% (24/24), done.
+remote: Compressing objects: 100% (17/17), done.
+Receiving objects: 100% (5991/5991), 1.63 MiB | 6.00 KiB/s, done.
+remote: Total 5991 (delta 11), reused 9 (delta 6), pack-reused 5967 (from 2)
+Resolving deltas: 100% (3402/3402), done.
+```
+
+Настройка переопределений. Создайте файл docker-compose.override.yml, чтобы пробросить порты наружу:
+```yaml
+services:
+  netbox:
+    ports:
+      - "8000:8080"
+```
+
+Забираем образы:
+```bash
+sudo docker compose pull
+```
+
+Однако, в наших пинатах можно столкнуться с особенностями блокировок. Ошибка `connection timed out` при обращении к `docker.io` (адрес 172.64.144.78:443) означает, что соединение с Docker Hub блокируется или обрывается (в РФ доступ к серверам `Docker Hub` ограничен, а IP `172.64.144.78` принадлежит `Cloudflare`).
+Чтобы обойти это ограничение и скачать образы для NetBox, настройте зеркала реестров (registry mirrors) в конфигурации демона Docker.
+
+Изменим список публичных зеркал в файле `/etc/docker/daemon.json`:
+```bash
+sudo tee /etc/docker/daemon.json <<EOF
+{
+  "registry-mirrors": [
+    "https://timeweb.cloud",
+    "https://mirror.gcr.io"
+  ]
+}
+EOF
+```
+
+Требуется перезапустить службу Docker, чтобы применить новую конфигурацию:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+```
+
+После чего (в моем случае), образы были "залиты":
+```bash
+admin@srvOoBService01:/opt/netbox-docker$ sudo docker compose pull
+[sudo: authenticate] Password:         
+[+] Pulling 5/5
+ ✔ redis-cache Skipped - Image is already being pulled by redis            0.0s 
+ ✔ netbox-worker Skipped - Image is already being pulled by netbox         0.0s 
+ ✔ postgres Pulled                                                         6.7s 
+ ✔ redis Pulled                                                            7.0s 
+ ✔ netbox Pulled 
+```
+
+Запустим контейнеры:
+```bash
+sudo docker compose up -d
+```
+
+Однако, в моем окружении EVE-NG не хватило времени для старта сервера и он вернул ошибку, но последовательная попытка запуска привела к успеху.
+
+Создадим суперпользователя для входа в веб-интерфейс и генерации API-токенов:
+```bash
+admin@srvOoBService01:/opt/netbox-docker$ sudo docker compose exec netbox /opt/netbox/netbox/manage.py createsuperuser
+🧬 loaded config '/etc/netbox/config/configuration.py'
+🧬 loaded config '/etc/netbox/config/extra.py'
+🧬 loaded config '/etc/netbox/config/logging.py'
+🧬 loaded config '/etc/netbox/config/plugins.py'
+/opt/netbox/netbox/netbox/settings.py:282: FutureWarning: LOGIN_REQUIRED is deprecated and will be removed in NetBox v5.0. This parameter can be removed from your configuration file.
+  warnings.warn(
+Username: admin
+Email address: admin@local.org
+Password: 
+Password (again): 
+This password is too short. It must contain at least 12 characters.
+Password must have at least one numeral.
+Bypass password validation and create user anyway? [y/N]: y
+Superuser created successfully.
+```
+
+> Пользователи `admin` не пересекаются между областями видимости и, вообще говоря, принадлежат разным системам: родительской и образа.
+
+Получим токен (только чтение): `Bearer nbt_x75oyug8vQzJ.BGgKW10Xl2241kqU0YTeTohZW5IIcZWdCW7bGivE`, который можно проверить обращением к серверу:
+```bash
+slipknot@MegaFire ~ % curl -X GET \
+-H "Authorization: Bearer nbt_x75oyug8vQzJ.BGgKW10Xl2241kqU0YTeTohZW5IIcZWdCW7bGivE" \
+-H "Content-Type: application/json" \
+-H "Accept: application/json; indent=4" \
+http://10.1.10.88:8000/api/status/
+{
+    "django-version": "6.1.3",
+    "hostname": "2928a1d61acf",
+    "installed_apps": {
+        "django_filters": "26.2",
+        "django_prometheus": "2.4.0",
+        "django_rq": "4.2.0",
+        "django_tables2": "3.0.1",
+        "drf_spectacular": "0.30.0",
+        "drf_spectacular_sidecar": "2026.10.1",
+        "mptt": "0.18.0",
+        "rest_framework": "3.18.3",
+        "social_django": "6.1.0",
+        "taggit": "7.0.0",
+        "timezone_field": "7.2.2"
+    },
+    "netbox-version": "4.7.5",
+    "netbox-full-version": "4.7.5-Docker-5.1.2",
+    "plugins": {},
+    "python-version": "3.14.4",
+    "rq-workers-running": 1
+}%           
+```
+
+Чтобы контейнеры запускались автоматически при включении или перезагрузке сервера, нужно добавить параметр `restart: unless-stopped` (или `always`) в конфигурацию каждого сервиса в файле `docker-compose.yml` и убедиться, что сама служба `Docker` стоит в автозагрузке. 
+
+Какую политику выбрать:
+- `restart: unless-stopped` (рекомендуется). Контейнер будет автоматически запускаться при старте системы и перезапускаться при сбоях, но не поднимется сам, если вы остановили его вручную через `docker stop` или `docker compose stop`.
+• `restart: always`. Контейнер будет запускаться при старте системы и перезапускаться всегда, даже если до перезагрузки сервера вы остановили его вручную.
+• `restart: on-failure`. Перезапускает контейнер только при аварийном завершении (код выхода не равен 0) и не подходит для простого автозапуска после плановой перезагрузки.
+
+Например:
+```yaml
+services:
+  web:
+    image: nginx:latest
+    restart: on-failure
+
+  db:
+    image: postgres:15
+    restart: unless-stopped
+```
+
+После сохранения файла примените изменения:
+```bash
+sudo docker compose up -d
+```
+
+Контейнеры стартуют только после запуска демона `Docker`. Убедиться, что служба добавлена в автозагрузку ОС (в современных дистрибутивах Linux это обычно включено по умолчанию):
+```bash
+sudo systemctl is-enabled docker
+sudo systemctl is-enabled containerd
+```
+
+и включить в автозагрузку, если это потребуется:
+```bash
+sudo systemctl enable docker.service
+sudo systemctl enable containerd.service
+```
+
+Сразу рассмотрим стратегию резервного копирования. Если посмотреть в файл `docker-compose.yml`, можно увидеть опции `volumes` у каждого образа, которые пробрасывают файловую систему хоста внутрь контейнера. Например, для сервиса `netbox`:
+```yaml
+...
+    volumes:
+      - ./configuration:/etc/netbox/config:z,ro
+      - netbox-media-files:/opt/netbox/netbox/media:rw
+      - netbox-reports-files:/opt/netbox/netbox/reports:rw
+      - netbox-scripts-files:/opt/netbox/netbox/scripts:rw
+...
+```
+
+В конфигурации NetBox Docker эти четыре строки делятся на два разных типа монтирования: обычная локальная папка (`bind mount`) и именованные тома Docker (`named volumes`):
+1. **Локальная папка (`Bind Mount`)**:
+    - `./configuration:/etc/netbox/config:z,ro`: Точка в начале пути (`./`) означает текущую директорию, в которой лежит файл `docker-compose.yml`. Если проект лежит в `/opt/netbox-docker/`, то реальная папка с конфигами на сервере находится по пути `/opt/netbox-docker/configuration/`. Именно сюда нужно класть файлы настроек вроде `configuration.py` или `plugins.py`.
+
+2. **Именованные тома (`Named Volumes`)**: Строки без точки или слэша в начале (`netbox-media-files`, `netbox-reports-files`, `netbox-scripts-files`) — это внутренние тома, которыми управляет сам Docker. По умолчанию в Linux они хранятся в системной директории Docker по пути `/var/lib/docker/volumes/`.
+    - `netbox-media-files:/opt/netbox/netbox/media:rw`: Файлы лежат в `/var/lib/docker/volumes/netbox-docker_netbox-media-files/_data`. Сюда сохраняются загруженные через веб-интерфейс картинки и вложения.
+    - `netbox-reports-files:/opt/netbox/netbox/reports:rw`: Здесь хранятся пользовательские отчеты.
+    - `netbox-scripts-files:/opt/netbox/netbox/scripts:rw`: Сюда помещаются кастомные скрипты автоматизации.
+
+Проект содержит не один сервис, поэтому таких папок может быть много.
+
+Как быстро узнать точный путь или перенести файлы
+
+• Узнать точный путь на диске. Выполните в терминале команду docker volume inspect <имя_тома> (список всех томов можно посмотреть через docker volume ls). В поле Mountpoint будет указан точный путь на хосте.
+• Загрузить свои скрипты или отчеты. Вы можете загружать их прямо через веб-интерфейс NetBox (в разделах Customization -> Scripts / Reports), и Docker сам положит их в нужный том.
+• Сделать папки обычными (как configuration). Если вам удобнее редактировать скрипты напрямую в папке рядом с docker-compose.yml, просто замените имена томов на относительные пути с точкой:
+```yaml
+volumes:
+  - ./configuration:/etc/netbox/config:z,ro
+  - ./media:/opt/netbox/netbox/media:rw
+  - ./reports:/opt/netbox/netbox/reports:rw
+  - ./scripts:/opt/netbox/netbox/scripts:rw
+```
+
+В этом случае все папки создадутся прямо рядом с вашим docker-compose.yml (не забудьте при этом удалить их упоминание из секции volumes: в самом низу docker-compose.yml).
+
+Для полноценного бэкапа NetBox вам нужно сохранить базу данных PostgreSQL, файлы конфигурации и именованные тома (media, reports, scripts).
+Лучший способ работать с именованными томами Docker — использовать временный контейнер-помощник, который упакует их в архив, не требуя прямого доступа в системную папку /var/lib/docker/.
+
+1. Создание бэкапа
+
+Выполните эти команды из папки, где лежит ваш docker-compose.yml (предполагается, что папка проекта называется netbox-docker, поэтому имена томов имеют префикс netbox-docker_):
+• Бэкап базы данных PostgreSQL. Снимите дамп базы без остановки контейнеров с помощью pg_dump.bash
+```bash
+docker compose exec -T postgres pg_dump -U netbox netbox > netbox_db_backup.sql
+```
+
+• Бэкап папки с конфигурацией. Просто заархивируйте локальную папку ./configuration и сам docker-compose.yml.```bash
+tar -czf netbox_config_backup.tar.gz configuration/ docker-compose.yml .env
+```
+
+• Бэкап именованных томов (media, reports, scripts). Запустите одноразовый контейнер alpine, который примонтирует ваши тома и упакует их в архивы в текущую директорию.
+```bash
+docker run --rm \
+  -v netbox-docker_netbox-media-files:/media:ro \
+  -v netbox-docker_netbox-reports-files:/reports:ro \
+  -v netbox-docker_netbox-scripts-files:/scripts:ro \
+  -v $(pwd):/backup \
+  alpine tar -czf /backup/netbox_volumes_backup.tar.gz /media /reports /scripts
+```
+
+В итоге у вас получится три файла (netbox_db_backup.sql, netbox_config_backup.tar.gz и netbox_volumes_backup.tar.gz), которые можно скопировать на другой сервер или в облако.
+
+2. Разворачивание (восстановление) из бэкапа
+
+Если вы переносите NetBox на чистый сервер, перенесите туда ваши архивы и выполните следующие шаги:
+• Шаг 1: Восстановите конфигурацию. Распакуйте архив с конфигами в новую папку проекта.
+```bash
+tar -xzf netbox_config_backup.tar.gz
+```
+
+• Шаг 2: Создайте структуру контейнеров и томов. Запустите только базу данных и создайте пустые тома, но пока не запускайте сам NetBox.
+```bash
+docker compose up -d postgres
+```
+
+(Подождите 10–15 секунд, пока PostgreSQL инициализирует пустую базу).
+
+• Шаг 3: Восстановите базу данных. Залейте ваш SQL-дамп обратно в контейнер с базой.
+```bash
+cat netbox_db_backup.sql | docker compose exec -T postgres psql -U netbox -d netbox
+```
+
+• Шаг 4: Распакуйте файлы в именованные тома. Снова используйте временный контейнер alpine, чтобы развернуть архив обратно в тома Docker.
+```bash
+docker run --rm \
+  -v netbox-docker_netbox-media-files:/media \
+  -v netbox-docker_netbox-reports-files:/reports \
+  -v netbox-docker_netbox-scripts-files:/scripts \
+  -v $(pwd):/backup \
+  alpine sh -c "tar -xzf /backup/netbox_volumes_backup.tar.gz -C / && chown -R 999:999 /media /reports /scripts"
+```
+
+(Примечание: chown -R 999:999 гарантирует, что у пользователя внутри контейнера NetBox будут права на чтение и запись восстановленных файлов).
+
+• Шаг 5: Запустите все сервисы. Теперь поднимите весь стек NetBox.
+```bash
+docker compose up -d
+```
+
+(Совет: перед запуском команд проверьте точные имена ваших томов через docker volume ls — если папка вашего проекта называется иначе, префикс перед _netbox-media-files будет другим).
+
+
+
+
+локальные папки и статические тома (media, reports, scripts) можно просто заархивировать на диске. Однако так делать категорически нельзя с томом базы данных PostgreSQL, если контейнеры при этом запущены.
+
+Том с базой данных (postgres-data) нельзя копировать напрямую во время работы контейнера.
+• Риск повреждения данных. PostgreSQL постоянно держит часть данных в оперативной памяти и пишет изменения на диск в реальном времени. Если вы заархивируете папку базы на ходу, файлы попадут в архив в несогласованном состоянии, и база при разворачивании просто не запустится.
+• Проблемы с версиями. Прямая копия файлов базы заработает только на точно такой же версии PostgreSQL и архитектуре процессора, тогда как текстовый дамп (pg_dump) можно развернуть почти где угодно.
+
+Если вы хотите делать резервную копию простым копированием файлов без сложных команд с временными контейнерами, придерживайтесь такой схемы:
+1. Остановите контейнеры командой `docker compose down` (если допустим небольшой простой на время копирования).
+2. Заархивируйте все нужные папки на диске, включая `/var/lib/docker/volumes/...` и папку проекта. Для Linux лучше использовать `tar -czpf` (флаг p сохраняет права доступа).
+3. Запустите контейнеры обратно через `docker compose up -d`.
+
+
+
+---
+
+Установка GitLab и GitLab Runner
+
+Для локального контура оптимально развернуть self-hosted GitLab и отдельный Runner, который будет иметь сетевой доступ как к NetBox, так и к сетевому оборудованию.
+• Развертывание GitLab CE. Создайте директорию `/opt/gitlab`:
+```bash
+sudo mkdir /opt/gitlab-docker
+cd /opt/gitlab-docker/
+```
+
+файл `docker-compose.yml` (потребуется минимум 4 ГБ ОЗУ):
+```yaml
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    restart: on-failure
+    container_name: gitlab
+    restart: always
+    hostname: 'gitlab.local'
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab.local'
+    ports:
+      - '80:80'
+      - '443:443'
+      - '2222:22'
+    volumes:
+      - './config:/etc/gitlab'
+      - './logs:/var/log/gitlab'
+      - './data:/var/opt/gitlab'
+    shm_size: '256m'
+```
+
+Запускаем контейнер командой `docker compose up -d`.
+
+Пароль пользователя `root` после инициализации можно узнать командой `sudo docker exec -it gitlab grep 'Password:' /etc/gitlab/initial_root_password`:
+```bash
+admin@srvOoBService01:/opt/gitlab-docker$ sudo docker exec -it gitlab grep 'Password:' /etc/gitlab/initial_root_password         
+Password: 3AZnsGbzlxrqAf385ikNm1LVIr1PVE9nDg2NSJUziJs=
+```
+
+![Первый вход в GitLab](GitLabFirstEnter.png)
+
+
+
+
 
 
 
