@@ -442,6 +442,38 @@ docker compose up -d
 3. Запустите контейнеры обратно через `docker compose up -d`.
 
 
+Обновление NetBox и GitLab, развернутых в Docker (обычно через docker-compose), требует строгого порядка и предварительного бэкапа.
+
+
+Общие правила перед началом
+1. Сделайте резервную копию (дамп базы данных PostgreSQL, файлы конфигурации и пользовательские данные / тома Docker).
+2. Проверьте совместимость и релизные заметки (Release Notes) для версий, на которые вы планируете переходить.
+
+
+1. Как обновлять NetBox (в Docker)
+
+Официальный репозиторий развертывания — netbox-community/netbox-docker. Процесс выглядит так:
+1. Перейдите в папку с проектом (где лежит ваш docker-compose.yml):bash
+cd /path/to/netbox-docker
+Используйте код с осторожностью.
+2. Обновите исходный код репозитория (если вы клонировали репозиторий с GitHub):bash
+git pull
+Используйте код с осторожностью.
+3. Скачайте новые образы контейнеров:bash
+docker compose pull
+Используйте код с осторожностью.
+4. Запустите обновление / пересоздайте контейнеры:bash
+docker compose up -d
+Используйте код с осторожностью.
+5. Примените миграции базы данных и соберите статику (если это требуется в вашем варианте docker-compose, обычно выполняется автоматически или через команду manage.py migrate):bash
+docker compose exec netbox python3 manage.py migrate
+Используйте код с осторожностью.
+Совет: Если вы прыгаете через несколько мажорных версий (например, с v3.7 на v4.x), рекомендуется делать это пошагово через промежуточные релизы, сверяясь с документацией NetBox Upgrading.
+
+
+
+
+
 
 ---
 
@@ -485,13 +517,219 @@ admin@srvOoBService01:/opt/gitlab-docker$ sudo docker exec -it gitlab grep 'Pass
 Password: 3AZnsGbzlxrqAf385ikNm1LVIr1PVE9nDg2NSJUziJs=
 ```
 
+Используя учетную запись `root` и полученный пароль, производим первый вход в систему:
+
 ![Первый вход в GitLab](GitLabFirstEnter.png)
 
+перед подключением раннера (GitLab Runner) лучше завершить базовую инициализацию и выполнить пару важных настроек самого GitLab, чтобы раннер смог без проблем регистрироваться и забирать код.
+
+Для NetGitOps (управления сетевой инфраструктурой как кодом: Ansible, Nornir, Terraform, конфигурации свитчей/роутеров, выгрузка данных в NetBox) лучше всего не выбирать никакой шаблон — то есть нажать Skip на текущем экране и создать пустой проект (Blank project).
+
+![Шаблон CI/CD](GitLabFirstEnter01.png)
+
+Почему не стоит брать готовые шаблоны из списка:
+• GitLab CI/CD components (который выбран на скриншоте) предназначен для разработки переиспользуемых плагинов для самого GitLab, а не для хранения конфигураций сети или плейбуков.
+• Остальные встроенные шаблоны (Spring, Ruby, Pages и др.) добавляют в репозиторий лишние файлы, папки и настройки сборки под разработку ПО, которые будут только мешать.
+
+![Настройка профиля](GitLabFirstEnter02.png)
+
+Как лучше организовать проект под NetGitOps:
+1. На текущем экране нажмите Skip, чтобы пропустить мастер создания с шаблоном.
+2. Зайдите в раздел Groups и создайте группу AI-cluster вручную (если она еще не создалась).
+3. Внутри группы нажмите New project → Create blank project.
+4. Снимите галочку Initialize repository with a README, если планируете залить (сделать git push) уже существующий локальный репозиторий с вашими плейбуками, ролями Ansible и инвентарем. Если начинаете с нуля — оставьте галочку включенной.
+После создания чистого репозитория вы просто добавите в корень свой файл .gitlab-ci.yml, который будет запускать линтеры (yamllint, ansible-lint), проверки конфигураций (batfish, --check) и накат изменений на сетевое оборудование через ваш раннер.
+
+GitLab Runner обязательно нужен, и развертывать его следует на отдельном выделенном сервере или виртуальной машине под управлением Ubuntu в вашей сети управления (Out-of-Band). Сам GitLab только хранит код и управляет очередью задач, а всю реальную работу выполняет именно раннер.
+
+
+Зачем нужен GitLab Runner в NetGitOps
+
+Без раннера пайплайн в GitLab не запустится и останется висеть в статусе Pending. В сетевой автоматизации он выполняет роль «рабочих рук»:
+• Связующее звено. Раннер стоит в одной сети с вашим оборудованием, забирает данные из NetBox по API и подключается к коммутаторам по SSH или eAPI.
+• Среда исполнения. Он поднимает изолированный Docker-контейнер со всеми нужными инструментами (Ansible, Python, линтеры, Batfish) и запускает внутри него ваши плейбуки.
+• Безопасность. Вам не нужно открывать доступ извне к сети управления коммутаторами. Раннер сам инициирует исходящее HTTPS-соединение к GitLab для получения задач.
+
+На чем и как его развертывать
+
+Не рекомендуется ставить раннер на тот же сервер, где крутится сам GitLab, из-за высоких требований к памяти. Оптимальный вариант — отдельная ВМ на Ubuntu Server (достаточно 2 vCPU, 4 ГБ RAM и 30–40 ГБ диска для кэша Docker-образов).
+
+Процесс развертывания состоит из четырех шагов.
+
+1. Установка Docker на сервер Ubuntu
+
+Раннер будет запускать задачи в контейнерах, поэтому сначала ставим Docker:
+```bash
+sudo apt update
+sudo apt upgrade
+sudo apt install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+```
+
+Проверим, что получили:
+```bash
+admin@srvOoBService01:/opt/netbox-docker$ cat /etc/apt/keyrings/docker.asc 
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+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
+YT90qFF93M3v01BbxP+EIY2/9tiIPbrd
+=0YYh
+-----END PGP PUBLIC KEY BLOCK-----
+```
+
+```
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu/dists/ \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+```
+
+-=-=-=
+
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu resolute stable" | sudo tee /etc/apt/sources.list.d/docker.list
+
+Ошибка Connection failed [IP: 3.174.2.110 443] подтверждает, что сервер srvOoBService01 физически не может установить TCP-соединение с IP-адресами AWS CloudFront (3.174.2.110, 3.174.2.112) на 443 порту из-за сетевой блокировки (Geo-IP / DPI / ограничения на уровне шлюза или провайдера).
+
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://mirror.yandex.ru/mirrors/download.docker.com/linux/ubuntu resolute stable" | sudo tee /etc/apt/sources.list.d/docker.list
+
+ебаный путин!!!
+
+Зеркало Яндекса отлично заработало и отдало индекс репозитория resolute, а ошибка NO_PUBKEY 7EA0A9C3F273FCD8 возникла из-за того, что файл ключа /etc/apt/keyrings/docker.gpg пустой или отсутствует (в прошлый раз его загрузка с docker.com сорвалась).
+
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://mirror.yandex.ru/mirrors/download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io
+
+Ошибка dpkg возникла из-за конфликта пакетов: новый официальный плагин docker-compose-plugin пытается перезаписать файл /usr/libexec/docker/cli-plugins/docker-compose, который уже принадлежит старому пакету Ubuntu docker-compose-v2.
+Все нужные .deb-пакеты уже скачаны в локальный кэш сервера (/var/cache/apt/archives/), поэтому заново качать 102 МБ целый час не придется.
+
+• Удалите конфликтующий пакет из стандартного репозитория Ubuntu:
+
+sudo apt remove -y docker-compose-v2
+
+sudo apt --fix-broken install -y
+
+sudo apt install -y docker-compose-plugin
+
+Убедитесь, что службы запустились и версии корректны:bash
+
+admin@srvOoBService01:/opt/netbox-docker$ docker --version
+Docker version 29.9.3, build 5457199
+admin@srvOoBService01:/opt/netbox-docker$ docker compose version
+Docker Compose version v5.7.1
+
+Переходим к установке runner'а:
+
+sudo apt update && sudo apt install -y curl gnupg
+
+curl -fsSL https://packages.gitlab.com/runner/gitlab-runner/gpgkey | sudo gpg --dearmor --yes -o /etc/apt/keyrings/gitlab-runner.gpg
+sudo chmod a+r /etc/apt/keyrings/gitlab-runner.gpg
+
+
+Добавление репозитория
+
+Этот блок декодирует правильную строку с URL репозитория и записывает её в /etc/apt/sources.list.d/gitlab-runner.list:
+
+echo "deb [signed-by=/etc/apt/keyrings/gitlab-runner.gpg] https://packages.gitlab.com/runner/gitlab-runner/ubuntu/ resolute main" | sudo tee /etc/apt/sources.list.d/gitlab-runner.list
+
+sudo apt update
+sudo apt install -y gitlab-runner
+
+
+
+-=-=-=-
+
+
+
+Создание раннера в интерфейсе GitLab
+
+В современных версиях GitLab старый способ регистрации через общий токен устарел. Теперь раннер создается прямо в интерфейсе:
+1. Зайдите в вашу группу или проект в GitLab.
+2. Перейдите в Settings -> CI/CD -> Runners и нажмите New group runner (или New project runner).
+3. Укажите тег, например netgitops (по нему пайплайны будут понимать, что задачу нужно отдать именно этому серверу).
+4. Нажмите Create runner и скопируйте выданную команду регистрации с токеном вида glrt-....
 
 
 
 
 
+
+
+2. Как обновлять GitLab (в Docker)
+
+GitLab в Docker чувствителен к версии, поэтому нельзя просто поставить тэг latest и прыгнуть через несколько версий.
+1. Узнайте текущую версию в интерфейсе GitLab (иконка вопроса вверху справа -> Help).
+2. Проверьте путь обновления (Upgrade Path) с помощью официального инструмента GitLab Upgrade Path Wizard, чтобы понять, через какие промежуточные версии (minor/patch) нужно пройти.
+3. Сделайте бэкап базы данных и файла секретов (gitlab.rb, gitlab-secrets.json).
+4. Отредактируйте docker-compose.yml, изменив тег образа gitlab/gitlab-ce:X.X.X-ce.0 (или gitlab/gitlab-ee) на следующую нужную версию в цепочке обновления.
+5. Скачайте образ и перезапустите контейнер:bash
+docker compose pull
+docker compose up -d
+Используйте код с осторожностью.
+6. Дождитесь завершения миграций (можно следить за логами: docker compose logs -f gitlab).
+7. Повторяйте шаги 4–6, пока не дойдете до целевой актуальной версии.
+Подробную инструкцию по контейнерам смотрите в официальной документации GitLab Docker Upgrades.
 
 
 ## Введение
